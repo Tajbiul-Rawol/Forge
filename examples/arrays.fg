@@ -1,0 +1,37 @@
+module arrays;
+
+// Sieve of Eratosthenes: prints primes up to 30, then a running sum.
+void Main() {
+    var n = 31;
+    var sieve = new int[n];      // 0 = prime, 1 = composite
+
+    var i = 2;
+    while (i < n) {
+        if (sieve[i] == 0) {
+            Console.WriteLine(i);          // i is prime
+            var j = i + i;
+            while (j < n) {
+                sieve[j] = 1;              // mark multiples composite
+                j = j + i;
+            }
+        }
+        i = i + 1;
+    }
+
+    Console.WriteLine(999);
+
+    // array length + read-back
+    var squares = new int[5];
+    var k = 0;
+    while (k < squares.length) {
+        squares[k] = k * k;
+        k = k + 1;
+    }
+    var total = 0;
+    k = 0;
+    while (k < squares.length) {
+        total = total + squares[k];
+        k = k + 1;
+    }
+    Console.WriteLine(total);              // 0+1+4+9+16 = 30
+}

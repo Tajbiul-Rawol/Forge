@@ -1,0 +1,38 @@
+module memory;
+
+// Arena memory without a garbage collector:
+//   heapmark() / heapreset(mark)  free everything allocated after a point
+//   heapreset()                   free everything this thread allocated
+// plus readfile/writefile on files of any size.
+
+struct Config { string name; int limit; }
+
+int Work(int round) {
+    // temporary allocations: 1,000 strings and a 1 MB buffer per round
+    int total = 0;
+    for (int i = 0; i < 1000; i = i + 1) { string s = str(i * round); total = total + s.length; }
+    u8* big = malloc(1000000);
+    big[999999] = 7;
+    return total + big[999999];
+}
+
+void Main() {
+    // long-lived data first...
+    Config cfg = new Config { name = "server", limit = 50 };
+    int mark = heapmark();
+    int sum = 0;
+    for (int round = 1; round <= cfg.limit; round = round + 1) {
+        sum = sum + Work(round);
+        heapreset(mark);                 // ...then free each round's garbage, keep cfg
+    }
+    Console.WriteLine($"{cfg.name} {sum} {heapmark() == mark}");
+
+    // files bigger than 64 KB
+    string s = "0123456789abcdef";
+    for (int i = 0; i < 14; i = i + 1) { s = s + s; }          // 256 KB
+    writefile("memory_test.txt", s);
+    string back = readfile("memory_test.txt");
+    Console.WriteLine($"{s.length} {back.length} {back == s}");
+    string missing = readfile("no_such_file.txt");
+    Console.WriteLine($"missing: [{missing}] {missing.length}");
+}

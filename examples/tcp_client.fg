@@ -1,0 +1,14 @@
+module socktest;
+void Main() {
+    Console.WriteLine("connecting...");
+    int fd = tcp_connect("127.0.0.1", 9099);
+    Console.WriteLine("connected, fd:");
+    Console.WriteLine(fd);
+    int sent = send(fd, "hello from forge");
+    Console.WriteLine("sent bytes:");
+    Console.WriteLine(sent);
+    string reply = recv(fd, 256);
+    Console.WriteLine("got reply:");
+    Console.WriteLine(reply);             // ECHO:hello from forge
+    closefd(fd);
+}

@@ -1,0 +1,96 @@
+module mt_bench;
+
+// Multithreaded benchmark, identical in every language. Each workload times
+// itself (no process start-up) and prints:  <name> <result> <microseconds>
+//   primes1 / primesN : count primes below 10,000,000 by trial division,
+//                       1 thread vs all CPUs, work handed out in chunks by an
+//                       atomic ticket counter
+//   atomic            : every thread does 1,000,000 atomic increments of one counter
+//   mutex             : every thread does 200,000 lock / increment / unlock
+//   spawn             : 500 rounds of: start one thread per CPU, join them all
+
+// shared block (int*): [0] next ticket  [1] total  [2] limit
+bool IsPrime(int n) {
+    if (n < 2) { return false; }
+    if (n % 2 == 0) { return n == 2; }
+    for (int d = 3; d * d <= n; d = d + 2) {
+        if (n % d == 0) { return false; }
+    }
+    return true;
+}
+
+int PrimeWorker(int* blk) {
+    int limit = blk[2];
+    int local = 0;
+    while (true) {
+        int start = atomic_add(blk, 10000);
+        if (start >= limit) { atomic_add(blk + 1, local); return 0; }
+        int end = start + 10000;
+        if (end > limit) { end = limit; }
+        for (int n = start; n < end; n = n + 1) {
+            if (IsPrime(n)) { local = local + 1; }
+        }
+    }
+    return 0;
+}
+
+int AtomicWorker(int* blk) {
+    for (int i = 0; i < 1000000; i = i + 1) { atomic_add(blk, 1); }
+    return 0;
+}
+
+int MutexWorker(int* blk) {
+    for (int i = 0; i < 200000; i = i + 1) {
+        lock(blk);
+        blk[1] = blk[1] + 1;
+        unlock(blk);
+    }
+    return 0;
+}
+
+int SpawnWorker(int* blk) {
+    atomic_add(blk, 1);
+    return 0;
+}
+
+int Primes(int threads, long[] hs, int* blk) {
+    blk[0] = 0; blk[1] = 0; blk[2] = 10000000;
+    for (int i = 0; i < threads; i = i + 1) { hs[i] = spawn PrimeWorker(blk); }
+    for (int i = 0; i < threads; i = i + 1) { join(hs[i]); }
+    return blk[1];
+}
+
+void Main() {
+    int t = cpu_count();
+    long[] hs = new long[t];
+    int* blk = (int*)malloc(64);
+    Console.WriteLine($"threads {t} 0");
+
+    int t0 = now_ns();
+    int c1 = Primes(1, hs, blk);
+    Console.WriteLine($"primes1 {c1} {(now_ns() - t0) / 1000}");
+
+    t0 = now_ns();
+    int cn = Primes(t, hs, blk);
+    Console.WriteLine($"primesN {cn} {(now_ns() - t0) / 1000}");
+
+    blk[0] = 0;
+    t0 = now_ns();
+    for (int i = 0; i < t; i = i + 1) { hs[i] = spawn AtomicWorker(blk); }
+    for (int i = 0; i < t; i = i + 1) { join(hs[i]); }
+    Console.WriteLine($"atomic {blk[0]} {(now_ns() - t0) / 1000}");
+
+    blk[0] = 0; blk[1] = 0;
+    t0 = now_ns();
+    for (int i = 0; i < t; i = i + 1) { hs[i] = spawn MutexWorker(blk); }
+    for (int i = 0; i < t; i = i + 1) { join(hs[i]); }
+    Console.WriteLine($"mutex {blk[1]} {(now_ns() - t0) / 1000}");
+
+    blk[0] = 0;
+    t0 = now_ns();
+    for (int r = 0; r < 500; r = r + 1) {
+        for (int i = 0; i < t; i = i + 1) { hs[i] = spawn SpawnWorker(blk); }
+        for (int i = 0; i < t; i = i + 1) { join(hs[i]); }
+    }
+    Console.WriteLine($"spawn {blk[0]} {(now_ns() - t0) / 1000}");
+}

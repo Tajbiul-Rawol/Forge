@@ -1,0 +1,73 @@
+module web_client;
+
+// An HTTP client written in Forge, using async/await.
+//
+// Start the server first (in another terminal):
+//     .\forge run examples\http_server.fg
+// then run this:
+//     .\forge run examples\web_client.fg
+//
+// Each request is its own async task. Forge has no DNS or HTTPS yet, so the
+// host must be an IP address serving plain HTTP.
+
+// Send one GET request and return the full response text.
+async Task<string> Get(string host, int port, string path) {
+    int fd = tcp_connect(host, port);
+    if (fd < 0) { return "ERROR: could not connect"; }
+
+    send(fd, "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n");
+    await Task.Yield();                         // let the other requests get going
+
+    // read until the server closes the connection
+    string resp = "";
+    string chunk = recv(fd, 4096);
+    while (chunk.length > 0) {
+        resp = resp + chunk;
+        chunk = recv(fd, 4096);
+    }
+    closefd(fd);
+    return resp;
+}
+
+// The first line of a response, e.g. "HTTP/1.1 200 OK".
+string StatusLine(string resp) {
+    int n = 0;
+    while (n < resp.length && resp[n] != 13 && resp[n] != 10) { n = n + 1; }
+    return substr(resp, 0, n);
+}
+
+// Everything after the blank line that ends the headers.
+string Body(string resp) {
+    int i = 0;
+    while (i + 3 < resp.length) {
+        if (resp[i] == 13 && resp[i + 1] == 10 && resp[i + 2] == 13 && resp[i + 3] == 10) {
+            return substr(resp, i + 4, resp.length - i - 4);
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+void Main() {
+    string host = "127.0.0.1";
+    int port = 9200;
+    Console.WriteLine("sending 3 requests to http://" + host + ":" + str(port) + " ...");
+
+    var a = Get(host, port, "/hello");
+    var b = Get(host, port, "/forge");
+    var c = Get(host, port, "/async");
+
+    string ra = await a;
+    string rb = await b;
+    string rc = await c;
+
+    Console.WriteLine("--- /hello ---");
+    Console.WriteLine(StatusLine(ra));
+    Console.WriteLine(Body(ra));
+    Console.WriteLine("--- /forge ---");
+    Console.WriteLine(StatusLine(rb));
+    Console.WriteLine(Body(rb));
+    Console.WriteLine("--- /async ---");
+    Console.WriteLine(StatusLine(rc));
+    Console.WriteLine(Body(rc));
+}

@@ -1,0 +1,40 @@
+module lowlevel;
+
+// Demonstrates the systems-programming primitives: pointers, sized integer
+// memory access, hex literals, and casting an address to a typed pointer
+// (the exact mechanism a driver uses for memory-mapped I/O).
+
+void Main() {
+    // raw bytes from the heap
+    var buf = malloc(16);          // u8*
+
+    // write a 32-bit word through a pointer cast, then read back its bytes.
+    // 0x12345678 stored little-endian should read as 78 56 34 12.
+    var word = (u32*)buf;
+    word[0] = 305419896;           // 0x12345678
+    Console.WriteLine(buf[0]);     // 120  (0x78)
+    Console.WriteLine(buf[1]);     // 86   (0x56)
+    Console.WriteLine(buf[2]);     // 52   (0x34)
+    Console.WriteLine(buf[3]);     // 18   (0x12)
+
+    // hex literals + address-of a local + dereference
+    var x = 0xFF;
+    var p = &x;                    // int*
+    Console.WriteLine(*p);         // 255
+    *p = 0x100;                    // write through the pointer
+    Console.WriteLine(x);          // 256
+
+    // MMIO pattern: treat a fixed address as a 32-bit device register.
+    // (Pointed at our own buffer here so it's runnable; on real hardware this
+    //  address would be the device's mapped register.)
+    var REGISTER_ADDR = 8;
+    var base = buf;
+    var reg = (u32*)(base + REGISTER_ADDR);   // pointer arithmetic via index below
+    reg[0] = 0xDEADBEEF;
+    Console.WriteLine(reg[0]);     // 3735928559
+
+    // sized access: store one byte, confirm width
+    var b = (u8*)buf;
+    b[10] = 0xAB;
+    Console.WriteLine(b[10]);      // 171
+}

@@ -1,0 +1,40 @@
+module redis_client;
+
+// Build a RESP "bulk string": $<len>\r\n<payload>\r\n
+string bulk(string s) {
+    return "$" + str(s.length) + "\r\n" + s + "\r\n";
+}
+
+// SET key value  ->  *3\r\n$3\r\nSET\r\n<key><value>
+void redis_set(int fd, string key, string val) {
+    string cmd = "*3\r\n" + bulk("SET") + bulk(key) + bulk(val);
+    send(fd, cmd);
+    string resp = recv(fd, 256);
+    Console.WriteLine("SET reply:");
+    Console.WriteLine(resp);           // +OK
+}
+
+// GET key  ->  *2\r\n$3\r\nGET\r\n<key>
+string redis_get(int fd, string key) {
+    string cmd = "*2\r\n" + bulk("GET") + bulk(key);
+    send(fd, cmd);
+    string resp = recv(fd, 256);       // $<len>\r\n<value>\r\n
+    return resp;
+}
+
+void Main() {
+    int fd = tcp_connect("127.0.0.1", 9300);
+    Console.WriteLine("connected to Redis, fd:");
+    Console.WriteLine(fd);
+
+    redis_set(fd, "language", "Forge");
+    redis_set(fd, "year", "2026");
+
+    Console.WriteLine("GET language raw reply:");
+    Console.WriteLine(redis_get(fd, "language"));   // $5\r\nForge\r\n
+
+    Console.WriteLine("GET year raw reply:");
+    Console.WriteLine(redis_get(fd, "year"));        // $4\r\n2026\r\n
+
+    closefd(fd);
+}

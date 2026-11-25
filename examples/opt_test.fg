@@ -1,0 +1,119 @@
+module opt_test;
+
+// Exercises the optimizer: every result must match the -O0 build.
+//   forgec run examples\opt_test.fg        vs   forgec run examples\opt_test.fg -O0
+
+int Fib(int n) {
+    if (n < 2) { return n; }
+    return Fib(n - 1) + Fib(n - 2);
+}
+
+// tail call with several params that read each other (needs temporaries)
+int Gcd(int a, int b) {
+    if (b == 0) { return a; }
+    return Gcd(b, a % b);
+}
+
+// accumulator with the call on the left: f(n-1) + n
+int SumTo(int n) {
+    if (n == 0) { return 0; }
+    return SumTo(n - 1) + n;
+}
+
+// accumulator plus a non-tail return in the middle of a loop
+int Weird(int n, int k) {
+    int i = 0;
+    while (i < k) {
+        if (i * i > n) { return i + 1000; }
+        i = i + 1;
+    }
+    if (n <= 0) { return k; }
+    return n + Weird(n - 3, k + 1);
+}
+
+// small helpers that get inlined; Clamp assigns its parameter
+int Sq(int x) { return x * x; }
+int Clamp(int v, int lo, int hi) {
+    if (v < lo) { v = lo; }
+    if (v > hi) { v = hi; }
+    return v;
+}
+int Mix(int a, int b) { return Sq(a) - Sq(b) + Clamp(a * b, -50, 50); }
+
+// a local in the callee, a loop in the callee
+int Tri(int n) {
+    int s = 0;
+    for (int i = 1; i <= n; i = i + 1) { s = s + i; }
+    return s;
+}
+
+// pointers: address-taken locals must stay in memory
+void Bump(int* p) { *p = *p + 7; }
+int AddrTest() {
+    int x = 5;
+    Bump(&x);
+    Bump(&x);
+    return x;
+}
+
+// argument evaluation order with side effects through a pointer
+int Next(int* c) { *c = *c + 1; return *c; }
+int Order() {
+    int c = 0;
+    int a = Next(&c) * 100 + Next(&c) * 10 + Next(&c);
+    return a;
+}
+
+// strings in an inlined function
+string Greet(string who) { return "hi " + who; }
+
+// a function that can throw calling inlined ones
+int SafeDiv(int a, int b) throws DivError {
+    if (b == 0) { throw new DivError("divide by zero"); }
+    return Sq(a) / b;
+}
+
+// arithmetic forms: shifts, division, modulo, negation, comparisons both ways
+int Arith(int a, int b) {
+    int r = 0;
+    r = r + (a << 3) + (a >> 1) + a / 3 + a % 7 - (-b);
+    if (5 < a && a <= 100 || b == 42) { r = r + 1; }
+    if (!(a > b)) { r = r + 2; }
+    if (10 - a > b) { r = r + 4; }
+    return r;
+}
+
+// many locals: more than the 5 registers
+int ManyLocals(int n) {
+    int a = n + 1; int b = a * 2; int c = b - 3; int d = c * c;
+    int e = d % 11; int f = e + a; int g = f * b; int h = g - c;
+    int s = 0;
+    for (int i = 0; i < n; i = i + 1) { s = s + a + b + c + d + e + f + g + h + i; }
+    return s;
+}
+
+void Main() {
+    Console.WriteLine(Fib(25));
+    Console.WriteLine(Gcd(1071, 462));
+    Console.WriteLine(Gcd(17, 5));
+    Console.WriteLine(SumTo(10000));
+    Console.WriteLine(Weird(50, 3));
+    Console.WriteLine(Weird(10, 0));
+    Console.WriteLine(Mix(7, 3));
+    Console.WriteLine(Mix(-9, 12));
+    Console.WriteLine(Tri(100));
+    Console.WriteLine(AddrTest());
+    Console.WriteLine(Order());
+    Console.WriteLine(Greet("forge"));
+    var q1 = try SafeDiv(9, 2) else -1;
+    Console.WriteLine(q1);
+    var q2 = try SafeDiv(9, 0) else -1;
+    Console.WriteLine(q2);
+    Console.WriteLine(Arith(13, 4));
+    Console.WriteLine(Arith(42, 42));
+    Console.WriteLine(Arith(-8, 1));
+    Console.WriteLine(ManyLocals(20));
+    int total = 0;
+    for (int i = 0; i < 30; i = i + 1) { total = total + Clamp(Fib(i % 12), 3, 60); }
+    Console.WriteLine(total);
+}

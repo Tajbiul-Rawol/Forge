@@ -1,0 +1,26 @@
+# Build output
+bin/
+obj/
+
+# Compiled Forge programs
+*.exe
+*.elf
+examples/fileio
+examples/http_server
+examples/redis
+examples/strings
+examples/tcp_client
+
+# Scratch
+ot2.txt
+
+# Benchmark build output
+target/
+out/
+*.pdb
+*.obj
+*.o
+*.ilk
+*.lib
+*.exp
+*.dll

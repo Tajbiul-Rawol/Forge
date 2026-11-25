@@ -1,0 +1,32 @@
+module threads;
+
+// Real OS threads (CreateThread). Workers share a results board anchored at the
+// stable heap base, writing to distinct slots (no data race), and main reads
+// the results after join.
+
+void worker_a() {
+    var board = (i64*)heapbase();
+    var sum = 0;
+    for (var i = 1; i <= 1000; i = i + 1) { sum = sum + i; }
+    board[0] = sum;                  // slot 0
+}
+void worker_b() {
+    var board = (i64*)heapbase();
+    var sum = 0;
+    for (var i = 1; i <= 100; i = i + 1) { sum = sum + i * i; }
+    board[1] = sum;                  // slot 1
+}
+
+void Main() {
+    Console.WriteLine("spawning two threads...");
+    var board = (i64*)heapbase();
+    board[0] = 0;
+    board[1] = 0;
+    var t1 = spawn worker_a;
+    var t2 = spawn worker_b;
+    join(t1);
+    join(t2);
+    Console.WriteLine(board[0]);     // 500500
+    Console.WriteLine(board[1]);     // 338350
+    Console.WriteLine("both threads done.");
+}

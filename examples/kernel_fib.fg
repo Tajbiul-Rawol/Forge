@@ -1,0 +1,9 @@
+module kfib;
+int Fib(int n) { if (n < 2) { return n; } return Fib(n-1) + Fib(n-2); }
+void Main() {
+    Console.WriteLine("Fibonacci, computed in ring 0:");
+    for (var i = 0; i <= 12; i = i + 1) {
+        Console.WriteLine(Fib(i));
+    }
+    Console.WriteLine("kernel halt.");
+}

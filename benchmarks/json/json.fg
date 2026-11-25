@@ -1,0 +1,215 @@
+module json_bench;
+
+// JSON throughput: serialize 20,000 records to a byte buffer, parse them back
+// into typed fields, checksum, repeat. The same hand-written algorithm is used
+// in every language (no JSON library), so this compares code generation on
+// byte-level string work: branches, loads/stores, integer formatting/parsing.
+//
+// Record layout in rec[]  (stride 6): id, score, active, t0, t1, t2
+// Parsed layout in out[]  (stride 8): id, score, active, t0, t1, t2, nameOff, nameLen
+// Wire format per record:
+//   {"id":17,"name":"user17","score":-4211,"active":true,"tags":[7,17,17]}
+
+// ---------------- writer ----------------
+int PutStr(u8* b, int p, string s) {
+    int i = 0;
+    while (s[i] != 0) { b[p] = s[i]; p = p + 1; i = i + 1; }
+    return p;
+}
+
+int PutInt(u8* b, int p, int v) {
+    if (v < 0) { b[p] = 45; p = p + 1; v = 0 - v; }
+    int n = 1;
+    int t = v;
+    while (t >= 10) { t = t / 10; n = n + 1; }
+    int e = p + n;
+    int q = e - 1;
+    while (q >= p) { b[q] = 48 + v % 10; v = v / 10; q = q - 1; }
+    return e;
+}
+
+int Serialize(u8* b, int[] rec, int n) {
+    int p = 0;
+    b[p] = 91; p = p + 1;                        // [
+    for (int i = 0; i < n; i = i + 1) {
+        int r = i * 6;
+        if (i > 0) { b[p] = 44; p = p + 1; }     // ,
+        b[p] = 123; p = p + 1;                   // {
+        p = PutStr(b, p, "\"id\":");
+        p = PutInt(b, p, rec[r]);
+        p = PutStr(b, p, ",\"name\":\"user");
+        p = PutInt(b, p, rec[r]);
+        p = PutStr(b, p, "\",\"score\":");
+        p = PutInt(b, p, rec[r + 1]);
+        if (rec[r + 2] != 0) { p = PutStr(b, p, ",\"active\":true"); }
+        else { p = PutStr(b, p, ",\"active\":false"); }
+        p = PutStr(b, p, ",\"tags\":[");
+        p = PutInt(b, p, rec[r + 3]); b[p] = 44; p = p + 1;
+        p = PutInt(b, p, rec[r + 4]); b[p] = 44; p = p + 1;
+        p = PutInt(b, p, rec[r + 5]);
+        p = PutStr(b, p, "]}");
+    }
+    b[p] = 93; p = p + 1;                        // ]
+    return p;
+}
+
+// ---------------- parser ----------------
+// Each reader takes the position and returns the new one; values come back in
+// tmp[0] (and tmp[1] for a string's length). A negative position is an error.
+
+int Ws(u8* b, int p) {
+    int c = b[p];
+    while (c == 32 || c == 10 || c == 13 || c == 9) { p = p + 1; c = b[p]; }
+    return p;
+}
+
+// expects a '"' at p; tmp[0] = offset of the first content byte, tmp[1] = length
+int ReadStr(u8* b, int p, int[] tmp) {
+    if (b[p] != 34) { return -1; }
+    p = p + 1;
+    int s = p;
+    int c = b[p];
+    while (c != 34) {
+        if (c == 92) { p = p + 1; }              // backslash: skip the escaped byte
+        if (c == 0) { return -1; }
+        p = p + 1;
+        c = b[p];
+    }
+    tmp[0] = s;
+    tmp[1] = p - s;
+    return p + 1;
+}
+
+int ReadInt(u8* b, int p, int[] tmp) {
+    int neg = 0;
+    if (b[p] == 45) { neg = 1; p = p + 1; }
+    int c = b[p];
+    if (c < 48 || c > 57) { return -1; }
+    int v = 0;
+    while (c >= 48 && c <= 57) { v = v * 10 + (c - 48); p = p + 1; c = b[p]; }
+    if (neg != 0) { v = 0 - v; }
+    tmp[0] = v;
+    return p;
+}
+
+int ReadBool(u8* b, int p, int[] tmp) {
+    if (b[p] == 116 && b[p + 1] == 114 && b[p + 2] == 117 && b[p + 3] == 101) { tmp[0] = 1; return p + 4; }
+    if (b[p] == 102 && b[p + 1] == 97 && b[p + 2] == 108 && b[p + 3] == 115 && b[p + 4] == 101) { tmp[0] = 0; return p + 5; }
+    return -1;
+}
+
+// does the key at b[off..off+len) equal s?
+bool KeyIs(u8* b, int off, int len, string s) {
+    int i = 0;
+    while (i < len) {
+        if (b[off + i] != s[i]) { return false; }
+        i = i + 1;
+    }
+    return s[len] == 0;
+}
+
+// one object starting at p (at '{'); fills out[o..o+8); returns the new position
+int ParseRecord(u8* b, int p, int[] out, int[] tmp) {
+    int o = tmp[2];
+    p = Ws(b, p);
+    if (b[p] != 123) { return -1; }
+    p = Ws(b, p + 1);
+    if (b[p] == 125) { return p + 1; }
+    while (true) {
+        p = ReadStr(b, p, tmp);
+        if (p < 0) { return -1; }
+        int koff = tmp[0];
+        int klen = tmp[1];
+        p = Ws(b, p);
+        if (b[p] != 58) { return -1; }           // :
+        p = Ws(b, p + 1);
+        if (KeyIs(b, koff, klen, "id")) {
+            p = ReadInt(b, p, tmp); out[o] = tmp[0];
+        } else if (KeyIs(b, koff, klen, "name")) {
+            p = ReadStr(b, p, tmp); out[o + 6] = tmp[0]; out[o + 7] = tmp[1];
+        } else if (KeyIs(b, koff, klen, "score")) {
+            p = ReadInt(b, p, tmp); out[o + 1] = tmp[0];
+        } else if (KeyIs(b, koff, klen, "active")) {
+            p = ReadBool(b, p, tmp); out[o + 2] = tmp[0];
+        } else if (KeyIs(b, koff, klen, "tags")) {
+            if (b[p] != 91) { return -1; }
+            p = Ws(b, p + 1);
+            int k = 0;
+            while (b[p] != 93) {
+                p = ReadInt(b, p, tmp);
+                if (p < 0) { return -1; }
+                if (k < 3) { out[o + 3 + k] = tmp[0]; }
+                k = k + 1;
+                p = Ws(b, p);
+                if (b[p] == 44) { p = Ws(b, p + 1); }
+            }
+            p = p + 1;
+        } else {
+            return -1;                           // unknown key
+        }
+        if (p < 0) { return -1; }
+        p = Ws(b, p);
+        if (b[p] == 44) { p = Ws(b, p + 1); }
+        else if (b[p] == 125) { return p + 1; }
+        else { return -1; }
+    }
+    return -1;
+}
+
+// returns the number of records parsed, or -1 on a syntax error
+int Parse(u8* b, int[] out, int[] tmp) {
+    int p = Ws(b, 0);
+    if (b[p] != 91) { return -1; }
+    p = Ws(b, p + 1);
+    int count = 0;
+    while (b[p] != 93) {
+        tmp[2] = count * 8;
+        p = ParseRecord(b, p, out, tmp);
+        if (p < 0) { return -1; }
+        count = count + 1;
+        p = Ws(b, p);
+        if (b[p] == 44) { p = Ws(b, p + 1); }
+    }
+    return count;
+}
+
+int Checksum(u8* b, int[] out, int count) {
+    int s = 0;
+    for (int i = 0; i < count; i = i + 1) {
+        int o = i * 8;
+        s = s + out[o] + out[o + 1] * 3 + out[o + 2] * 5 + out[o + 3] + out[o + 4] + out[o + 5];
+        s = s + out[o + 7] + b[out[o + 6] + 4];  // name length + first digit after "user"
+    }
+    return s;
+}
+
+void Main() {
+    int n = 20000;
+    int iters = 100;
+    int[] rec = new int[n * 6];
+    for (int i = 0; i < n; i = i + 1) {
+        int r = i * 6;
+        rec[r] = i;
+        rec[r + 1] = (i * 7919) % 200001 - 100000;
+        if (i % 3 == 0) { rec[r + 2] = 1; } else { rec[r + 2] = 0; }
+        rec[r + 3] = i % 10;
+        rec[r + 4] = i % 1000;
+        rec[r + 5] = i * 31 % 100000;
+    }
+    u8* buf = malloc(4194304);
+    int[] out = new int[n * 8];
+    int[] tmp = new int[4];
+    int bytes = 0;
+    int check = 0;
+    for (int it = 0; it < iters; it = it + 1) {
+        rec[0] = it;                             // data changes every pass
+        int len = Serialize(buf, rec, n);
+        buf[len] = 0;
+        int count = Parse(buf, out, tmp);
+        if (count != n) { Console.WriteLine(-1); return; }
+        bytes = bytes + len;
+        check = check + Checksum(buf, out, count);
+    }
+    Console.WriteLine(bytes);
+    Console.WriteLine(check);
+}

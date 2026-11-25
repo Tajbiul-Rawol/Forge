@@ -1,0 +1,85 @@
+module async_demo;
+
+// async / await in Forge.
+//
+// Calling an async function starts a Task immediately on its own stack; it runs
+// until it finishes or first suspends, then the caller gets the Task handle back.
+// 'await t' returns the result, suspending the current task until t is done.
+// Scheduling is cooperative and single-threaded, so it also works on bare metal.
+
+// A worker that interleaves with others: it yields after every step.
+async Task<int> SumTo(int id, int n) {
+    var total = 0;
+    for (var i = 1; i <= n; i = i + 1) {
+        total = total + i;
+        Console.WriteLine($"  task {id}: step {i}");
+        await Task.Yield();                 // let the other tasks run
+    }
+    return total;
+}
+
+// Async functions can await other async functions (and recurse).
+async Task<int> Fib(int n) {
+    if (n < 2) { return n; }
+    var a = Fib(n - 1);                     // start both halves...
+    var b = Fib(n - 2);
+    return await a + await b;               // ...then wait for both
+}
+
+// Async with no result.
+async Task Greet(string who) {
+    await Task.Yield();
+    Console.WriteLine("hello, " + who);
+}
+
+// A producer/consumer pair talking through a shared one-slot mailbox.
+async Task Producer(i64* box, int count) {
+    for (var i = 1; i <= count; i = i + 1) {
+        while (box[0] != 0) { await Task.Yield(); }   // wait until the slot is empty
+        box[1] = i * 10;
+        box[0] = 1;                                     // mark full
+    }
+}
+
+async Task<int> Consumer(i64* box, int count) {
+    var sum = 0;
+    for (var i = 0; i < count; i = i + 1) {
+        while (box[0] == 0) { await Task.Yield(); }   // wait until the slot is full
+        Console.WriteLine($"  consumed {box[1]}");
+        sum = sum + box[1];
+        box[0] = 0;                                     // mark empty
+    }
+    return sum;
+}
+
+async Task Background() {
+    await Task.Yield();
+    Console.WriteLine("background task finished (fire-and-forget)");
+}
+
+void Main() {
+    Console.WriteLine("=== interleaving ===");
+    Task<int> t1 = SumTo(1, 3);
+    Task<int> t2 = SumTo(2, 3);
+    Console.WriteLine(await t1 + await t2);          // 6 + 6 = 12
+
+    Console.WriteLine("=== recursion ===");
+    Console.WriteLine(await Fib(15));                // 610
+
+    Console.WriteLine("=== Task (no result) + WhenAll ===");
+    var g1 = Greet("forge");
+    var g2 = Greet("bare metal");
+    await Task.WhenAll(g1, g2);
+
+    Console.WriteLine("=== producer / consumer ===");
+    var box = (i64*)malloc(16);
+    box[0] = 0;
+    var p = Producer(box, 4);
+    var c = Consumer(box, 4);
+    await p;
+    Console.WriteLine(await c);                      // 10+20+30+40 = 100
+
+    Console.WriteLine("=== fire and forget ===");
+    Background();                                    // never awaited; still completes
+    Console.WriteLine("Main is done");
+}

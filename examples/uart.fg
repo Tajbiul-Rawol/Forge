@@ -1,0 +1,93 @@
+module uart_driver;
+
+// ===========================================================================
+// A UART (serial port) driver — the classic "first driver".
+//
+// The driver talks to the device ONLY through memory-mapped registers, exactly
+// as real firmware does: it polls a status bit, then writes a byte to the data
+// register. The "hardware" is modelled by uart_device_step() so the whole thing
+// runs and you see real characters come out. On real silicon you would delete
+// the device model and point UART_BASE at the chip's register address instead.
+//
+// Register map (offsets from the device base address):
+//   +0  DATA    (u8)  byte to transmit / received byte
+//   +4  STATUS  (u32) bit0 = TX_READY (1 = ready to accept a byte)
+//                     bit1 = TX_BUSY  (1 = a byte is waiting to be sent)
+//   +8  CTRL    (u32) bit0 = ENABLE
+// ===========================================================================
+
+// --- register offsets and bit masks ---------------------------------------
+int REG_DATA()    { return 0; }
+int REG_STATUS()  { return 4; }
+int REG_CTRL()    { return 8; }
+
+int TX_READY()    { return 1; }    // STATUS bit 0
+int TX_BUSY()     { return 2; }    // STATUS bit 1
+int CTRL_ENABLE() { return 1; }    // CTRL  bit 0
+
+// --- low-level register access (volatile MMIO) -----------------------------
+u32 reg_read(u8* base, int off) {
+    var p = (u32*)(base + off);
+    return p[0];
+}
+void reg_write(u8* base, int off, u32 val) {
+    var p = (u32*)(base + off);
+    p[0] = val;
+}
+
+// --- the driver: initialise, then transmit a byte --------------------------
+void uart_init(u8* base) {
+    reg_write(base, REG_CTRL(), CTRL_ENABLE());      // enable the device
+    reg_write(base, REG_STATUS(), TX_READY());       // start ready, not busy
+}
+
+// poll TX_READY, then hand a byte to the data register and flag TX_BUSY
+void uart_putc(u8* base, int ch) {
+    // spin until the device says it can accept a byte
+    var ready = 0;
+    while (ready == 0) {
+        var status = reg_read(base, REG_STATUS());
+        ready = status & TX_READY();
+    }
+    base[REG_DATA()] = ch;                           // write the data register (1 byte)
+    reg_write(base, REG_STATUS(), TX_BUSY());        // clear READY, set BUSY
+}
+
+// --- the "hardware": consume a queued byte and transmit it -----------------
+void uart_device_step(u8* base) {
+    var status = reg_read(base, REG_STATUS());
+    if ((status & TX_BUSY()) != 0) {
+        var ch = base[REG_DATA()];                   // read the data register
+        putc(ch);                                    // "transmit" it to the wire
+        reg_write(base, REG_STATUS(), TX_READY());   // ready for the next byte
+    }
+}
+
+// send one character through the driver, then let the device transmit it
+void send(u8* base, int ch) {
+    uart_putc(base, ch);
+    uart_device_step(base);
+}
+
+void Main() {
+    // map the device: a 16-byte register block (RAM here; a real address on HW)
+    var uart = malloc(16);
+    uart_init(uart);
+
+    // drive "FORGE UART\n" out through the register interface, byte by byte
+    send(uart, 70);    // F
+    send(uart, 79);    // O
+    send(uart, 82);    // R
+    send(uart, 71);    // G
+    send(uart, 69);    // E
+    send(uart, 32);    // space
+    send(uart, 85);    // U
+    send(uart, 65);    // A
+    send(uart, 82);    // R
+    send(uart, 84);    // T
+    send(uart, 10);    // newline
+
+    // confirm the control register still reads back the ENABLE bit we set
+    var ctrl = reg_read(uart, REG_CTRL());
+    Console.WriteLine(ctrl & CTRL_ENABLE());     // 1
+}

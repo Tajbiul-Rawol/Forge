@@ -1,0 +1,8 @@
+module kernel;
+void Main() {
+    Console.WriteLine("Forge kernel: ring 0, 64-bit, no OS.");
+    for (var i = 0; i < 8; i = i + 1) {
+        Console.WriteLine(i);
+    }
+    Console.WriteLine("done.");
+}

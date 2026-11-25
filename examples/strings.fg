@@ -1,0 +1,23 @@
+module strtest;
+void Main() {
+    string a = "Hello, ";
+    string b = "Forge!";
+    string c = a + b;              // concat
+    Console.WriteLine(c);          // Hello, Forge!
+    Console.WriteLine(c.length);   // 13
+
+    Console.WriteLine(c[0]);       // 72  ('H')
+
+    if (a == "Hello, ") { Console.WriteLine("eq works"); }
+    if (a == b) { Console.WriteLine("BUG"); } else { Console.WriteLine("neq works"); }
+
+    string n = str(12345);         // int -> string
+    Console.WriteLine(n);          // 12345
+    Console.WriteLine(n + " ok");  // 12345 ok
+
+    int v = toint("6789");         // string -> int
+    Console.WriteLine(v + 1);      // 6790
+
+    string sub = substr("abcdefgh", 2, 3);  // cde
+    Console.WriteLine(sub);
+}

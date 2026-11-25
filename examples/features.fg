@@ -1,0 +1,49 @@
+module features;
+
+// Exercises every feature the compiler currently supports.
+
+int Divide(int a, int b) throws MathError {
+    if (b == 0) {
+        throw new MathError("division by zero");
+    }
+    return a / b;
+}
+
+int Average(int total, int count) throws MathError {
+    var each = try Divide(total, count);   // bare try = propagate the error upward
+    return each;
+}
+
+int Fib(int n) {
+    if (n < 2) {
+        return n;
+    }
+    return Fib(n - 1) + Fib(n - 2);
+}
+
+bool IsEven(int n) {
+    return n % 2 == 0;
+}
+
+void Main() {
+    Console.WriteLine("=== errors ===");
+    var good = try Divide(84, 2) else -1;      // succeeds -> 42
+    var bad  = try Divide(84, 0) else -1;      // fails -> fallback -1
+    Console.WriteLine(good);
+    Console.WriteLine(bad);
+
+    var avg = try Average(100, 4) else 0;      // propagation works -> 25
+    Console.WriteLine(avg);
+
+    Console.WriteLine("=== recursion ===");
+    var i = 0;
+    while (i <= 10) {
+        Console.WriteLine(Fib(i));             // 0 1 1 2 3 5 8 13 21 34 55
+        i = i + 1;
+    }
+
+    Console.WriteLine("=== logic ===");
+    if (IsEven(8) && Fib(7) > 10) {
+        Console.WriteLine(777);
+    }
+}

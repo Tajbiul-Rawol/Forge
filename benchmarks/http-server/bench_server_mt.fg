@@ -1,0 +1,25 @@
+module bench_server_mt;
+// Multithreaded HTTP server: one worker thread per CPU, all blocking in accept()
+// on the same listening socket (the OS hands each connection to one of them).
+// heapreset() frees only the calling thread's memory, so every worker can reset
+// after each request without disturbing the others.
+
+int Worker(int server) {
+    while (true) {
+        int client = accept(server);
+        string req = recv(client, 1024);
+        send(client, "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, World!");
+        closefd(client);
+        heapreset();
+    }
+    return 0;
+}
+
+void Main() {
+    int server = tcp_listen(8090);
+    int n = cpu_count();
+    Console.WriteLine($"forge multithreaded server on 127.0.0.1:8090 ({n} threads)");
+    long[] workers = new long[n];
+    for (int i = 0; i < n; i = i + 1) { workers[i] = spawn Worker(server); }
+    join(workers[0]);                         // workers never return
+}

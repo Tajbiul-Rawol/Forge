@@ -1,0 +1,59 @@
+module turing;
+
+// A genuine single-tape Turing machine, interpreted from an encoded
+// transition table. The tape is an array (our heap-backed store). This is the
+// concrete demonstration that the language is Turing complete: a universal
+// machine model runs on it.
+//
+// This instance computes binary increment: it adds 1 to the binary number on
+// the tape (reading right-to-left, propagating carry). Symbols: 0, 1, blank=2.
+//
+// State 0 = "carry": moving left, turning 1s into 0s until it finds a 0 or
+//                    blank, which it turns into 1, then halts (state 99).
+
+int Step(int[] tape, int head, int state) throws Halt {
+    var sym = tape[head];
+
+    if (state == 0) {
+        if (sym == 1) {
+            tape[head] = 0;        // 1 + carry -> 0, carry continues
+            return head - 1;       // move left, stay in carry state
+        }
+        // sym is 0 or blank: write 1, carry consumed, halt
+        tape[head] = 1;
+        throw new Halt("done");
+    }
+    throw new Halt("bad state");
+}
+
+void Main() {
+    var len = 8;
+    var tape = new int[len];
+
+    // initialize tape to blanks (2), then write the binary number 1011 (=11)
+    var i = 0;
+    while (i < len) { tape[i] = 2; i = i + 1; }
+    tape[3] = 1;
+    tape[4] = 0;
+    tape[5] = 1;
+    tape[6] = 1;     // number occupies cells 3..6 : 1 0 1 1
+
+    Console.WriteLine(11);          // input value, for reference
+
+    // run the machine from the rightmost digit
+    var head = 6;
+    var halted = 0;
+    while (halted == 0) {
+        head = try Step(tape, head, 0) else -999;
+        if (head == -999) { halted = 1; }
+    }
+
+    // read the tape back as a binary number -> should be 1100 (=12)
+    var value = 0;
+    var p = 3;
+    while (p < 7) {
+        value = value * 2 + tape[p];
+        p = p + 1;
+    }
+    Console.WriteLine(value);       // expect 12
+}

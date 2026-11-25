@@ -1,0 +1,31 @@
+module webserver;
+
+// A tiny HTTP server written entirely in Forge.
+// Runs forever -- curl it from another terminal to test, Ctrl+C to stop.
+void Main() {
+    int server = tcp_listen(9200);
+    Console.WriteLine("Forge HTTP server listening on http://127.0.0.1:9200");
+    Console.WriteLine("Curl it from another terminal. Ctrl+C to stop.");
+
+    int count = 0;
+    while (true) {
+        int client = accept(server);
+        count = count + 1;
+
+        string req = recv(client, 2048);
+
+        // pull out the request line (everything up to the first CR or LF)
+        int nl = 0;
+        while (nl < req.length && req[nl] != 13 && req[nl] != 10) {
+            nl = nl + 1;
+        }
+        string line = substr(req, 0, nl);
+        Console.WriteLine(line);                 // e.g. "GET /hello HTTP/1.1"
+
+        string body = "<html><body><h1>Served by Forge</h1><p>Request #" + str(count) + "</p><p>You sent: " + line + "</p></body></html>";
+        string resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: " + str(body.length) + "\r\nConnection: close\r\n\r\n" + body;
+
+        send(client, resp);
+        closefd(client);
+    }
+}

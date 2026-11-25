@@ -1,0 +1,69 @@
+module window;
+
+// A native Windows GUI app: a window class whose window procedure is Forge code,
+// a message loop, text drawn on WM_PAINT. Closes itself after 3 timer ticks
+// (remove the SetTimer call to keep it open). Build: --target win
+
+extern "kernel32.dll" long GetModuleHandleA(u8* name);
+extern "user32.dll" u16 RegisterClassExA(WndClass wc);
+extern "user32.dll" long CreateWindowExA(u32 exStyle, string cls, string title, u32 style,
+                                         i32 x, i32 y, i32 w, i32 h, long parent, long menu, long inst, u8* param);
+extern "user32.dll" bool ShowWindow(long hwnd, i32 cmd);
+extern "user32.dll" i32 GetMessageA(Msg m, long hwnd, u32 min, u32 max);
+extern "user32.dll" bool TranslateMessage(Msg m);
+extern "user32.dll" long DispatchMessageA(Msg m);
+extern "user32.dll" long DefWindowProcA(long hwnd, u32 msg, long wp, long lp);
+extern "user32.dll" void PostQuitMessage(i32 code);
+extern "user32.dll" long SetTimer(long hwnd, long id, u32 ms, u8* fn);
+extern "user32.dll" bool DestroyWindow(long hwnd);
+extern "user32.dll" long BeginPaint(long hwnd, u8* ps);
+extern "user32.dll" bool EndPaint(long hwnd, u8* ps);
+extern "user32.dll" long LoadCursorA(long inst, long name);
+extern "gdi32.dll" bool TextOutA(long hdc, i32 x, i32 y, string text, i32 len);
+
+// the Win32 structs, laid out exactly as in C
+struct WndClass {
+    u32 size; u32 style; u8* proc; i32 clsExtra; i32 wndExtra;
+    long instance; long icon; long cursor; long background; u8* menuName; string className; long iconSmall;
+}
+struct Msg { long hwnd; u32 message; long wParam; long lParam; u32 time; i32 x; i32 y; u32 priv; }
+struct State { int ticks; int paints; }
+
+// one global-ish state object, reachable from the window procedure
+State Global() { return (State)heapbase(); }
+
+extern long WndProc(long hwnd, long msg, long wp, long lp) {
+    State st = Global();
+    if (msg == 0x000F) {                                   // WM_PAINT
+        u8* ps = malloc(72);
+        long hdc = BeginPaint(hwnd, ps);
+        string text = "Hello from Forge: a native window, no runtime.";
+        TextOutA(hdc, 20, 20, text, (i32)text.length);
+        EndPaint(hwnd, ps);
+        st.paints = st.paints + 1;
+        return 0;
+    }
+    if (msg == 0x0113) {                                   // WM_TIMER
+        st.ticks = st.ticks + 1;
+        if (st.ticks == 3) { DestroyWindow(hwnd); }
+        return 0;
+    }
+    if (msg == 0x0002) { PostQuitMessage(0); return 0; }   // WM_DESTROY
+    return DefWindowProcA(hwnd, (u32)msg, wp, lp);
+}
+
+void Main() {
+    long inst = GetModuleHandleA(null);
+    WndClass wc = new WndClass { proc = &WndProc, instance = inst, className = "ForgeWindow",
+                                 cursor = LoadCursorA(0, 32512), background = 6 };
+    wc.size = (u32)sizeof(WndClass);
+    if (RegisterClassExA(wc) == 0) { Console.WriteLine("RegisterClassEx failed"); return; }
+    long hwnd = CreateWindowExA(0, "ForgeWindow", "Forge", 0x10CF0000,     // WS_OVERLAPPEDWINDOW | WS_VISIBLE
+                                100, 100, 520, 160, 0, 0, inst, null);
+    if (hwnd == 0) { Console.WriteLine("CreateWindowEx failed"); return; }
+    SetTimer(hwnd, 1, 300, null);
+    Msg m = new Msg();
+    while (GetMessageA(m, 0, 0, 0) > 0) { TranslateMessage(m); DispatchMessageA(m); }
+    State st = Global();
+    Console.WriteLine($"window closed after {st.ticks} timer ticks, painted {st.paints > 0}");
+}

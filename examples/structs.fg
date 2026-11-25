@@ -1,0 +1,83 @@
+module structs;
+
+// Structs: fields, methods (with implicit 'this'), object initializers, references,
+// null, linked data, packed layouts over raw memory, sizeof.
+
+struct Point {
+    int x;
+    int y;
+    int LengthSq() { return x * x + y * y; }
+    void Move(int dx, int dy) { x = x + dx; y = y + dy; }
+    Point Plus(Point o) { return new Point { x = x + o.x, y = y + o.y }; }
+}
+
+struct Node {
+    int value;
+    Node next;
+}
+
+struct List {
+    Node head;
+    int count;
+    void Push(int v) { head = new Node { value = v, next = head }; count = count + 1; }
+    int Sum() {
+        int s = 0;
+        Node n = head;
+        while (n != null) { s = s + n.value; n = n.next; }
+        return s;
+    }
+}
+
+// mixed widths: natural alignment, like C
+struct Mixed { u8 a; u32 b; u16 c; int d; }
+
+// a hardware-style layout: no padding (an x86-64 IDT gate is exactly 16 bytes)
+packed struct IdtGate {
+    u16 offsetLow;
+    u16 selector;
+    u8 ist;
+    u8 flags;
+    u16 offsetMid;
+    u32 offsetHigh;
+    u32 zero;
+}
+
+int Area(Point a, Point b) { return (b.x - a.x) * (b.y - a.y); }
+
+void Main() {
+    Point p = new Point { x = 3, y = 4 };
+    Console.WriteLine(p.LengthSq());                 // 25
+    p.Move(1, 1);
+    Console.WriteLine($"{p.x} {p.y}");               // 4 5
+    Point q = p.Plus(new Point { x = 10, y = 20 });
+    Console.WriteLine($"{q.x} {q.y}");               // 14 25
+    Console.WriteLine(Area(p, q));                   // 200
+
+    List l = new List();
+    for (int i = 1; i <= 100; i = i + 1) { l.Push(i); }
+    Console.WriteLine($"{l.count} {l.Sum()}");       // 100 5050
+
+    Point none = null;
+    if (none == null) { Console.WriteLine("null ok"); }
+    Point d;                                          // declared without a value: null
+    if (d == null && l.head != null) { Console.WriteLine("default ok"); }
+
+    Console.WriteLine($"{sizeof(Point)} {sizeof(Mixed)} {sizeof(IdtGate)} {sizeof(u16)}");   // 16 24 16 2
+
+    // overlay a packed struct on raw memory and read the bytes back
+    u8* raw = malloc(32);
+    IdtGate g = (IdtGate)raw;
+    g.offsetLow = 0x1234; g.selector = 8; g.ist = 0; g.flags = 0x8E; g.offsetMid = 0x5678; g.offsetHigh = 0x9ABCDEF0;
+    Console.WriteLine($"{raw[0]} {raw[1]} {raw[2]} {raw[5]} {raw[6]} {raw[8]} {raw[11]}");   // 52 18 8 142 120 240 154
+
+    Mixed m = new Mixed { a = 255, b = 4000000000, c = 65535, d = -7 };
+    Console.WriteLine($"{m.a} {m.b} {m.c} {m.d}");   // 255 4000000000 65535 -7
+
+    Point[] pts = new Point[5];
+    for (int i = 0; i < 5; i = i + 1) { pts[i] = new Point { x = i, y = i * 2 }; }
+    int total = 0;
+    for (int i = 0; i < 5; i = i + 1) { total = total + pts[i].x + pts[i].y; }
+    Console.WriteLine(total);                        // 30
+    int[] arr = new int[7];
+    Console.WriteLine(arr.length);                   // 7
+}

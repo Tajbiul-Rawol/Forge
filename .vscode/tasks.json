@@ -1,0 +1,38 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Forge: run current file",
+            "type": "shell",
+            "command": "${workspaceFolder}/forge.bat",
+            "args": ["run", "${file}"],
+            "options": { "cwd": "${fileDirname}" },
+            "group": { "kind": "build", "isDefault": true },
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+            "problemMatcher": {
+                "owner": "forge",
+                "fileLocation": ["autoDetect", "${fileDirname}"],
+                "pattern": {
+                    "regexp": "^(.*\\.fg):(\\d+):\\s+(error|warning):\\s+(.*)$",
+                    "file": 1, "line": 2, "severity": 3, "message": 4
+                }
+            }
+        },
+        {
+            "label": "Forge: check current file",
+            "type": "shell",
+            "command": "${workspaceFolder}/forge.bat",
+            "args": ["check", "${file}"],
+            "options": { "cwd": "${fileDirname}" },
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+            "problemMatcher": {
+                "owner": "forge",
+                "fileLocation": ["autoDetect", "${fileDirname}"],
+                "pattern": {
+                    "regexp": "^(.*\\.fg):(\\d+):\\s+(error|warning):\\s+(.*)$",
+                    "file": 1, "line": 2, "severity": 3, "message": 4
+                }
+            }
+        }
+    ]
+}

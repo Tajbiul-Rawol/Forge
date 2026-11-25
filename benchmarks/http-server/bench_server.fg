@@ -1,0 +1,15 @@
+module bench_server;
+// Single-threaded HTTP server: accept, read request, send fixed response, close.
+// heapreset() reclaims the bump-allocator memory each request (no GC), so it
+// can serve indefinitely instead of exhausting the 16 MB heap.
+void Main() {
+    int server = tcp_listen(8080);
+    Console.WriteLine("forge bench server on 127.0.0.1:8080");
+    while (true) {
+        int client = accept(server);
+        string req = recv(client, 1024);
+        send(client, "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, World!");
+        closefd(client);
+        heapreset();
+    }
+}

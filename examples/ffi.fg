@@ -1,0 +1,33 @@
+module ffi;
+
+// Calling C libraries (Windows DLLs here): extern declarations, the C# [DllImport]
+// spelling, and a Forge function C calls back (qsort comparator). Build: --target win
+
+extern "kernel32.dll" u32 GetCurrentProcessId();
+[DllImport("kernel32.dll")] static extern u32 GetTickCount();
+extern "msvcrt.dll" i32 sprintf(u8* buf, string fmt, long a, long b, string s);
+extern "msvcrt.dll" void qsort(u8* base, long count, long size, u8* compare);
+extern "msvcrt.dll" long strlen(string s);
+extern "msvcrt.dll" i32 abs(i32 x);
+
+// called by qsort (C code) for every comparison
+extern int Compare(long* a, long* b) {
+    if (*a < *b) { return -1; }
+    if (*a > *b) { return 1; }
+    return 0;
+}
+
+void Main() {
+    Console.WriteLine(GetCurrentProcessId() > 0);
+    u8* buf = malloc(100);
+    string buf2 = "hello";
+    int n = sprintf(buf, "%lld-%lld %s", 42, -7, "forge");
+    Console.WriteLine($"{n} {(string)buf} {strlen(buf2)} {abs(-5)}");
+    long* xs = (long*)malloc(80);
+    long seed = 12345;
+    for (int i = 0; i < 10; i = i + 1) { seed = (seed * 1103515245 + 12345) % 1000; xs[i] = seed; }
+    qsort((u8*)xs, 10, 8, &Compare);
+    bool sorted = true;
+    for (int i = 1; i < 10; i = i + 1) { if (xs[i - 1] > xs[i]) { sorted = false; } }
+    Console.WriteLine($"sorted {sorted} {xs[0]} {xs[9]}");
+}

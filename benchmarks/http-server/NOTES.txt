@@ -1,0 +1,10 @@
+TOOLCHAIN NOTES
+- The C# projects target net10.0. If you have a different .NET SDK,
+  edit the <TargetFramework> in bench_csharp/bench_csharp.csproj and
+  ../cpu-fibonacci/fib_csharp/fib_csharp.csproj (e.g. net9.0, net10.0).
+- Ports used: Forge 8080, Go 8081, Rust 8082, C# 8083, C 8084; multithreaded
+  servers: Forge 8090, Go 8091, Rust 8092, C# 8093, C 8094, C++ 8095. If any are taken,
+  change them in both the server source and pass the matching port to the load
+  client (or edit run.sh).
+- run.sh auto-skips any language whose compiler isn't found, so a partial
+  toolchain still works (e.g. just Forge vs C#).

@@ -1,0 +1,11 @@
+module forloop;
+void Main() {
+    var sum = 0;
+    for (var i = 1; i <= 10; i = i + 1) {
+        sum = sum + i;
+    }
+    Console.WriteLine(sum);          // 55
+    for (var j = 0; j < 3; j = j + 1) {
+        Console.WriteLine(j);        // 0 1 2
+    }
+}

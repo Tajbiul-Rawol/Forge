@@ -1,0 +1,195 @@
+module kernel_os;
+
+// A tiny operating system in Forge, for --target kernel (boots in QEMU):
+//   - an interrupt descriptor table built from a packed struct
+//   - CPU exception handlers (divide error, general protection, page fault)
+//   - the 8259 PIC remapped, the 8253 PIT ticking at 100 Hz (IRQ 0)
+//   - a PS/2 keyboard driver (IRQ 1) with a scancode -> ASCII table
+//   - page-table control: map a new virtual address, prove it aliases memory
+//   - a command shell on the serial port
+//
+//   forgec build examples/kernel_os.fg -o os.elf --target kernel
+//   qemu-system-x86_64 -kernel os.elf -serial stdio      (keys typed into the QEMU
+//                                                          window reach the PS/2 driver)
+//   qemu-system-x86_64 -kernel os.elf -nographic          (everything over serial)
+
+packed struct IdtGate {
+    u16 offsetLow;
+    u16 selector;
+    u8 ist;
+    u8 flags;          // 0x8E: present, ring 0, 64-bit interrupt gate
+    u16 offsetMid;
+    u32 offsetHigh;
+    u32 reserved;
+}
+
+// kernel state lives in the 4 KB region at heapbase(), reachable from handlers
+struct Kernel {
+    int ticks;
+    int keyCount;
+    u8* keys;          // ring buffer of typed characters (256 bytes)
+    int keyHead;
+    int keyTail;
+    int zero;
+}
+Kernel K() { return (Kernel)heapbase(); }
+
+void Print(string s) { for (int i = 0; i < s.length; i = i + 1) { putc(s[i]); } }
+
+void Halt(string why) {
+    Console.WriteLine(why);
+    Console.WriteLine("system halted.");
+    while (true) { cli(); hlt(); }
+}
+
+// ---- interrupt handlers (the compiler saves registers and returns with iretq)
+interrupt void DivideError() { Halt("EXCEPTION: divide error (#DE)"); }
+interrupt void GeneralProtection(long error) { Console.WriteLine($"EXCEPTION: general protection fault, error {error}"); Halt(""); }
+interrupt void PageFault(long error) { Console.WriteLine($"EXCEPTION: page fault at {read_cr2()}, error {error}"); Halt(""); }
+
+interrupt void Timer() {
+    Kernel k = K();
+    k.ticks = k.ticks + 1;
+    outb(0x20, 0x20);                       // end of interrupt
+}
+
+interrupt void Keyboard() {
+    int code = inb(0x60);
+    if (code < 0x80) {                      // key press (releases have bit 7 set)
+        int ch = ScanToAscii(code);
+        if (ch != 0) {
+            Kernel k = K();
+            k.keys[k.keyHead % 256] = ch;
+            k.keyHead = k.keyHead + 1;
+            k.keyCount = k.keyCount + 1;
+        }
+    }
+    outb(0x20, 0x20);
+}
+
+// scancode set 1 -> ASCII for the main block of a US keyboard ('#' = none)
+int ScanToAscii(int code) {
+    string map = "##1234567890-=##qwertyuiop[]##asdfghjkl;'`##zxcvbnm,./###";
+    if (code == 0x1C) { return 10; }        // Enter
+    if (code == 0x39) { return 32; }        // Space
+    if (code >= map.length) { return 0; }
+    int c = map[code];
+    if (c == 35) { return 0; }
+    return c;
+}
+
+// ---- setup
+void SetGate(u8* idt, int vector, u8* handler, int selector) {
+    long a = (long)handler;
+    IdtGate g = (IdtGate)(idt + vector * 16);
+    g.offsetLow = a & 0xFFFF;
+    g.selector = selector;
+    g.ist = 0;
+    g.flags = 0x8E;
+    g.offsetMid = (a >> 16) & 0xFFFF;
+    g.offsetHigh = (a >> 32) & 0xFFFFFFFF;
+    g.reserved = 0;
+}
+
+int CodeSelector() {
+    long sel = 0;
+    asm("mov ax, cs", "movzx eax, ax", "mov {sel}, rax");
+    return sel;
+}
+
+void SetupInterrupts() {
+    u8* idt = malloc(256 * 16);
+    for (int i = 0; i < 256 * 16; i = i + 1) { idt[i] = 0; }
+    int cs = CodeSelector();
+    SetGate(idt, 0, &DivideError, cs);
+    SetGate(idt, 13, &GeneralProtection, cs);
+    SetGate(idt, 14, &PageFault, cs);
+    SetGate(idt, 32, &Timer, cs);           // IRQ 0 after remapping
+    SetGate(idt, 33, &Keyboard, cs);        // IRQ 1
+    lidt(idt, 256 * 16 - 1);
+
+    // remap the PICs: IRQ 0-7 -> vectors 32-39, IRQ 8-15 -> 40-47
+    outb(0x20, 0x11); outb(0xA0, 0x11);
+    outb(0x21, 0x20); outb(0xA1, 0x28);
+    outb(0x21, 4);    outb(0xA1, 2);
+    outb(0x21, 1);    outb(0xA1, 1);
+    outb(0x21, 0xFC); outb(0xA1, 0xFF);     // unmask only the timer and the keyboard
+
+    // PIT channel 0, mode 3, 100 Hz (1193182 / 11932)
+    outb(0x43, 0x36);
+    outb(0x40, 11932 & 0xFF);
+    outb(0x40, 11932 >> 8);
+    sti();
+}
+
+// ---- paging: the boot stub identity-maps 0-1 GB with 2 MB pages
+// (PML4 -> PDPT -> PD). Map virtual 1 GB..1 GB+2 MB onto physical 2 MB..4 MB
+// (where the heap lives) through a new page directory, then write through one
+// address and read through the other.
+void PagingDemo() {
+    long cr3 = read_cr3();
+    long* pml4 = (long*)(cr3 & 0xFFFFFFFFFFFFF000);
+    long* pdpt = (long*)(pml4[0] & 0xFFFFFFFFFFFFF000);
+    long* pd0 = (long*)(pdpt[0] & 0xFFFFFFFFFFFFF000);
+    Console.WriteLine($"cr3 {cr3}  pml4[0] {pml4[0]}  pd[1] {pd0[1]}");
+
+    u8* raw = malloc(8192);
+    long* pd = (long*)(((long)raw + 4095) & 0xFFFFFFFFFFFFF000);   // 4 KB aligned page directory
+    for (int i = 0; i < 512; i = i + 1) { pd[i] = 0; }
+    pd[0] = 0x200000 | 0x83;                 // present | writable | 2 MB page
+    pdpt[1] = (long)pd | 3;                  // present | writable
+    invlpg(0x40000000);
+
+    long* phys = (long*)malloc(64);          // somewhere in 2 MB..4 MB
+    long* alias = (long*)(0x40000000 + ((long)phys - 0x200000));
+    *alias = 0x0F0E0D0C;
+    Console.WriteLine($"wrote via {(long)alias}, read via {(long)phys}: {*phys == 0x0F0E0D0C}");
+}
+
+// ---- shell
+string ReadLine() {
+    u8* buf = malloc(128);
+    int n = 0;
+    while (true) {
+        int c = getc();
+        if (c == 13 || c == 10) { putc(10); buf[n] = 0; return (string)buf; }
+        if ((c == 8 || c == 127) && n > 0) { n = n - 1; putc(8); putc(32); putc(8); }
+        else if (c >= 32 && n < 127) { buf[n] = c; n = n + 1; putc(c); }
+    }
+    return "";
+}
+
+void Main() {
+    Kernel k = K();
+    k.keys = malloc(256);
+    Console.WriteLine("Forge OS: 64-bit, ring 0, no libraries.");
+    SetupInterrupts();
+    Console.WriteLine("interrupts on: timer 100 Hz, PS/2 keyboard. Type 'help'.");
+    int mark = heapmark();
+    while (true) {
+        Print("forge> ");
+        string cmd = ReadLine();
+        if (cmd == "help") {
+            Console.WriteLine("commands: ticks uptime keys paging divzero reboot halt");
+        } else if (cmd == "ticks") {
+            Console.WriteLine(k.ticks);
+        } else if (cmd == "uptime") {
+            Console.WriteLine($"{k.ticks / 100}.{k.ticks % 100} s");
+        } else if (cmd == "keys") {
+            Print($"{k.keyCount} key(s) from the PS/2 keyboard: ");
+            while (k.keyTail < k.keyHead) { putc(k.keys[k.keyTail % 256]); k.keyTail = k.keyTail + 1; }
+            putc(10);
+        } else if (cmd == "paging") {
+            PagingDemo();
+        } else if (cmd == "divzero") {
+            Console.WriteLine(10 / k.zero);
+        } else if (cmd == "reboot") {
+            outb(0x64, 0xFE);
+        } else if (cmd == "halt") {
+            Halt("bye.");
+        } else if (cmd.length > 0) {
+            Console.WriteLine($"unknown command '{cmd}'");
+        }
+        heapreset(mark);                     // free the line buffers
+    }
+}

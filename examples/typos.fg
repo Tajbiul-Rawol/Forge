@@ -1,0 +1,12 @@
+// A deliberately broken program to demonstrate `forgec check` and "did you mean?"
+// Try:  forgec check examples\typos.fg
+module typos;
+
+int Square(int x) { return x * x; }
+
+void Main() {
+    var count = 3;
+    var unused = 99;             // warning: declared but never used
+    Console.WriteLine(Squre(count));   // error: did you mean 'Square'?
+    Console.WriteLine(cont);           // error: did you mean 'count'?
+}

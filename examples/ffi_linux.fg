@@ -1,0 +1,36 @@
+module ffi_linux;
+
+// Calling libc from Forge on Linux (dynamically linked: needs the system loader).
+//   glibc: forgec build examples/ffi_linux.fg --target linux
+//   musl (Alpine): use "libc.musl-x86_64.so.1" below and add --interp /lib/ld-musl-x86_64.so.1
+
+extern "libc.so.6" i32 getpid();
+extern "libc.so.6" i32 printf(string fmt, long a, string s);
+extern "libc.so.6" i32 fflush(u8* f);
+extern "libc.so.6" void qsort(u8* base, long count, long size, u8* compare);
+extern "libc.so.6" long strlen(string s);
+extern "libc.so.6" u8* malloc(long n);
+
+extern int Compare(long* a, long* b) {
+    if (*a < *b) { return -1; }
+    if (*a > *b) { return 1; }
+    return 0;
+}
+
+int Worker(int x) { string s = str(x * 2); return s.length; }
+
+void Main() {
+    Console.WriteLine(getpid() > 0);
+    printf("printf says %lld %s\n", 42, "from libc");
+    fflush(null);
+    long* xs = (long*)malloc(80);
+    long seed = 777;
+    for (int i = 0; i < 10; i = i + 1) { seed = (seed * 1103515245 + 12345) % 1000; xs[i] = seed; }
+    qsort((u8*)xs, 10, 8, &Compare);
+    bool sorted = true;
+    for (int i = 1; i < 10; i = i + 1) { if (xs[i - 1] > xs[i]) { sorted = false; } }
+    string h = "hello";
+    Console.WriteLine($"sorted {sorted} strlen {strlen(h)}");
+    long t = spawn Worker(500000);                    // Forge threads still work next to libc
+    Console.WriteLine(join(t));
+}

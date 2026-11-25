@@ -1,0 +1,14 @@
+module filetest;
+void Main() {
+    string path = "/tmp/forge_io_test.txt";
+    string content = "Forge wrote this!\nLine two.\n";
+    int n = writefile(path, content);
+    Console.WriteLine("bytes written:");
+    Console.WriteLine(n);                  // 28
+
+    string back = readfile(path);
+    Console.WriteLine("read back:");
+    Console.WriteLine(back);               // the content
+    Console.WriteLine("length:");
+    Console.WriteLine(back.length);        // 28
+}

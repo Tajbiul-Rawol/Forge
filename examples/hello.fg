@@ -1,0 +1,7 @@
+module hello;
+
+void Main() {
+    Console.WriteLine("Hello from Forge, compiled to a native Windows exe.");
+    var sum = 20 + 22;
+    Console.WriteLine(sum);
+}

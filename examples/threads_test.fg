@@ -1,0 +1,121 @@
+module threads_test;
+
+// Multithreading test: every line of output is deterministic.
+//   forgec run examples\threads_test.fg                       (Windows)
+//   forgec build examples\threads_test.fg --target linux      (Linux)
+
+// shared state lives in memory main allocates and passes to the threads
+int Square(int n) { return n * n; }
+
+// spawn F(arg): one parameter, any 8-byte value; join returns the result
+int SumTo(int n) {
+    int s = 0;
+    for (int i = 1; i <= n; i = i + 1) { s = s + i; }
+    return s;
+}
+
+// 100,000 atomic increments of a shared counter
+int AtomicWorker(int* counter) {
+    for (int i = 0; i < 100000; i = i + 1) { atomic_add(counter, 1); }
+    return 0;
+}
+
+// a lock protecting a plain (non-atomic) read-modify-write of two cells
+int LockedWorker(int* cells) {
+    for (int i = 0; i < 20000; i = i + 1) {
+        lock(cells);
+        cells[1] = cells[1] + 1;
+        cells[2] = cells[2] + 2;
+        unlock(cells);
+    }
+    return 0;
+}
+
+// lots of per-thread allocation: strings, arrays, chunk growth past 4 MB, heapreset
+int AllocWorker(int id) {
+    int total = 0;
+    for (int round = 0; round < 50; round = round + 1) {
+        string s = "";
+        for (int i = 0; i < 40; i = i + 1) { s = s + str(id); }
+        total = total + s.length;
+        int[] big = new int[200000];          // 1.6 MB per round: forces new chunks
+        big[199999] = id;
+        total = total + big[199999] - id;
+        heapreset();                          // frees only this thread's memory
+    }
+    return total;                             // 50 * 40 * digits(id)
+}
+
+// lock-free max via compare-and-swap. best[0] = running max, best[1..8] = values,
+// best[9] = ticket counter: atomic_add returns the old value, so each worker gets
+// a distinct index.
+int CasWorker(int* best) {
+    int idx = atomic_add(best + 9, 1) + 1;
+    int v = best[idx];
+    bool done = false;
+    while (!done) {
+        int cur = atomic_load(best);
+        if (v <= cur) { done = true; }
+        else if (atomic_cas(best, cur, v)) { done = true; }
+    }
+    return v;
+}
+
+void NoArgs() { sleep_ms(5); }
+
+void Main() {
+    // 1. arguments and results
+    long a = spawn SumTo(100);
+    long b = spawn SumTo(1000);
+    long c = spawn Square(12);
+    Console.WriteLine(join(a));               // 5050
+    Console.WriteLine(join(b));               // 500500
+    Console.WriteLine(join(c));               // 144
+
+    // 2. atomics: 8 threads x 100,000
+    int* counter = (int*)malloc(8);
+    *counter = 0;
+    long[] hs = new long[8];
+    for (int i = 0; i < 8; i = i + 1) { hs[i] = spawn AtomicWorker(counter); }
+    for (int i = 0; i < 8; i = i + 1) { join(hs[i]); }
+    Console.WriteLine(*counter);              // 800000
+
+    // 3. lock: 8 threads x 20,000
+    int* cells = (int*)malloc(24);
+    cells[0] = 0; cells[1] = 0; cells[2] = 0;
+    for (int i = 0; i < 8; i = i + 1) { hs[i] = spawn LockedWorker(cells); }
+    for (int i = 0; i < 8; i = i + 1) { join(hs[i]); }
+    Console.WriteLine(cells[1]);              // 160000
+    Console.WriteLine(cells[2]);              // 320000
+
+    // 4. per-thread allocation
+    int sum = 0;
+    for (int i = 0; i < 8; i = i + 1) { hs[i] = spawn AllocWorker(i + 1); }
+    for (int i = 0; i < 8; i = i + 1) { sum = sum + join(hs[i]); }
+    Console.WriteLine(sum);                   // 8 * 50 * 40 = 16000
+
+    // 5. compare-and-swap max
+    int* best = (int*)malloc(80);
+    best[0] = 0; best[9] = 0;
+    for (int i = 1; i <= 8; i = i + 1) { best[i] = i * 37 % 101; }
+    for (int i = 0; i < 8; i = i + 1) { hs[i] = spawn CasWorker(best); }
+    int vs = 0;
+    for (int i = 0; i < 8; i = i + 1) { vs = vs + join(hs[i]); }
+    Console.WriteLine(best[0]);
+    Console.WriteLine(vs);                    // every value taken exactly once: 423               // max of i*37%101 for i=1..8 = 94
+
+    // 6. main thread allocating far past the 16 MB static heap
+    int got = 0;
+    for (int i = 0; i < 40; i = i + 1) {
+        int[] chunk = new int[125000];        // 1 MB each, 40 MB total, no reset
+        chunk[124999] = i;
+        got = got + chunk[124999];
+    }
+    Console.WriteLine(got);                   // 780
+
+    // 7. misc
+    long t = spawn NoArgs;
+    join(t);
+    if (cpu_count() > 0) { Console.WriteLine("cpus ok"); }
+    Console.WriteLine("done");
+}
