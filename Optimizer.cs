@@ -389,6 +389,7 @@ static class Walker {
             case InlineRet ir: if (ir.E != null) WalkExpr(ir.E, fe, fs); break;
             case ExprStmt e: WalkExpr(e.E, fe, fs); break;
             case PrintStmt p: WalkExpr(p.Arg, fe, fs); break;
+            case MemberAssign ma: WalkExpr(ma.Obj, fe, fs); WalkExpr(ma.E, fe, fs); break;   // before lowering
         }
     }
     public static void WalkExpr(Expr? e, Action<Expr>? fe, Action<Stmt>? fs) {
@@ -410,6 +411,8 @@ static class Walker {
             case WhenAllExpr wa: foreach (var t in wa.Tasks) WalkExpr(t, fe, fs); break;
             case Interp itp: foreach (var part in itp.Parts) if (part is ValueTuple<Expr, string?> tup) WalkExpr(tup.Item1, fe, fs); break;
             case InlineExpr ie: Walk(ie.Body, fe, fs); break;
+            case MemberExpr me: WalkExpr(me.Obj, fe, fs); break;          // before lowering
+            case IncDecExpr id: WalkExpr(id.Target, fe, fs); break;
         }
     }
 }

@@ -65,6 +65,7 @@ sealed partial class CodeGen {
         _target = target;
         _usesAsync = AsyncRuntime.Uses(mod);
         if (_usesAsync) AsyncRuntime.Inject(mod);
+        StdLib.Inject(mod);                      // the Math functions the program calls (StdLib.cs)
         int doubleLine = DoubleRuntime.FirstUse(mod);
         if (doubleLine > 0) {
             if (target == Target.Kernel)
@@ -355,7 +356,7 @@ sealed partial class CodeGen {
         "exit","getc","heapbase","heapmark","heapreset","hlt","inb","inl","invlpg","inw","join","lgdt","lidt",
         "lock","malloc","now_ns","outb","outl","outw","pause","putc","rdmsr","rdtsc","read_cr0","read_cr2",
         "read_cr3","read_cr4","readfile","recv","send","sleep_ms","sti","str","strlen","substr","tcp_connect",
-        "tcp_listen","toint","unlock","write_cr0","write_cr3","write_cr4","writefile","wrmsr","ioerr",
+        "tcp_listen","toint","unlock","write_cr0","write_cr3","write_cr4","writefile","wrmsr","ioerr","__sqrt",
     };
     string TypeOf(Expr e) {
         if (_typeCache.TryGetValue(e, out var cached)) return cached;
@@ -449,6 +450,7 @@ sealed partial class CodeGen {
                     }
                     return exd.Ret;
                 }
+                if (c.Name.StartsWith("Math.")) ResolveMathCall(c);   // Math.Sqrt(x) -> __sqrt, Math.Sin(x) -> __math_sin, ...
                 // a generic function: instantiate it (Generics.cs) and call the instance
                 if (c.TypeArgs != null || (!_funcs.ContainsKey(c.Name) && _genericFuncs.ContainsKey(c.Name))) ResolveGenericCall(c);
                 if (c.Name.StartsWith(".")) {            // obj.Method(...) -> Struct.Method(obj, ...)
@@ -480,6 +482,11 @@ sealed partial class CodeGen {
                     return "void";
                 }
                 if (c.Name == "heapmark") { Need(c, 0); return "int"; }
+                if (c.Name == "__sqrt") {                 // Math.Sqrt: the sqrtsd instruction
+                    Need(c, 1); c.Args[0] = Coerce(c.Args[0], "double");
+                    if (TypeOf(c.Args[0]) != "double") Err(c, "Math.Sqrt(x) takes a number");
+                    return "double";
+                }
                 // ---- bare metal: ports, interrupts, control registers, MSRs, descriptor tables
                 if (c.Name is "outb" or "outw" or "outl") { Need(c, 2); if (!IsInt(TypeOf(c.Args[0])) || !IsInt(TypeOf(c.Args[1]))) Err(c, $"{c.Name}(port, value)"); return "void"; }
                 if (c.Name is "inb" or "inw" or "inl") { Need(c, 1); if (!IsInt(TypeOf(c.Args[0]))) Err(c, $"{c.Name}(port)"); return "int"; }
@@ -2263,6 +2270,7 @@ sealed partial class CodeGen {
             case "toint":    EmitExpr(c.Args[0]); _a.Db(0x48,0x89,0xc7); _a.CallRel("atoi"); return;       // rdi=s
             case "strlen":   EmitExpr(c.Args[0]); _a.Db(0x48,0x89,0xc7); _a.CallRel("strlen"); return;
             case "substr":   EmitArgsTo(c, "rdi","rsi","rdx"); _a.CallRel("substr"); return;                // s,start,len
+            case "__sqrt":   EmitExpr(c.Args[0]); _a.Db(0x66,0x48,0x0f,0x6e,0xc0); _a.Db(0xf2,0x0f,0x51,0xc0); _a.Db(0x66,0x48,0x0f,0x7e,0xc0); return;   // movq xmm0,rax; sqrtsd xmm0,xmm0; movq rax,xmm0
             case "readfile": EmitExpr(c.Args[0]); _a.Db(0x48,0x89,0xc7); _a.CallRel("readfile"); return;   // rdi=path
             case "writefile":EmitArgsTo(c, "rdi","rsi"); _a.CallRel("writefile"); return;                  // path, data
             case "tcp_connect": _usesNet = true; EmitArgsTo(c, "rdi","rsi"); _a.CallRel("tcp_connect"); return;             // host, port

@@ -107,6 +107,11 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
 
+### Session: Math library (2026-11-26)
+- `StdLib.cs`: the standard library as Forge source, injected per program with only the functions it calls (transitively). The parser turns `Math.Name(..)` into a call named "Math.Name" and `Math.PI/E/Tau` into constants; `ResolveMathCall` maps it (int or double versions of Abs/Min/Max/Sign/Clamp by argument type). `Math.Sqrt` is the `__sqrt` builtin (sqrtsd).
+- exp, log, log10, log2, pow (e_pow.c), sin/cos (k_sin, k_cos, rem_pio2 medium), atan, atan2 are fdlibm ports using `__hi/__lo/__make` for the IEEE words; floor/ceiling/round/truncate are exact SSE2-only code. Measured against .NET on 4,000 random inputs per function and 1,264 edge cases: within 1 ulp (tan and asin 2 ulp). A first pow (x^n * exp(f log x)) was 11 ulp off, hence the e_pow port.
+- `Walker` now also descends into MemberExpr / MemberAssign / IncDecExpr (the stdlib and double-use scans run before lowering).
+
 ### Session: generics (2026-11-26)
 - `Generics.cs`: monomorphization. The parser marks templates (`Func.TypeParams`, `StructDecl.TypeParams`, methods get `GenericOwner`); `ExtractGenerics` takes them out of the module in the CodeGen constructor and instantiates every generic struct type the concrete code mentions (`EnsureType` on all type strings, recursively, with the struct registered before its fields so `Node<T> next` works). Generic functions are instantiated in `TypeOf(CallExpr)` (`ResolveGenericCall`): explicit `Max<int>(..)` or inferred by unifying parameter and argument types (through `T[]`, `T*`, `List<T>`). Instances are named `List<int>`, `List<int>.Add`, `Max<double>` and are ordinary functions/structs, so codegen and the optimizer are unchanged; `Analyze` iterates by index so instances made during checking get checked.
 - `GenericCloner` copies pre-lowering bodies (all node kinds), mapping type strings (`SubstType`; the struct's bare name in its own methods means the instance) and renaming labels (break/continue labels are global).
@@ -201,7 +206,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 - Interrupt handlers must not allocate while interrupting code that also allocates (the allocator isn't reentrant).
 - C callbacks must run on the main thread or a Forge thread (they need Forge's thread pointer).
 - On Linux, call `fflush(null)` before exiting if you used `printf` (Forge exits with `exit_group`).
-- No float (32-bit), classes/inheritance, interfaces, generic constraints, generic methods inside structs, or destructors. Struct-by-value fields and inline fixed arrays inside structs aren't supported. `double` isn't available on the kernel target or through `extern`; no exponent literals (`1e6`) or math library yet.
+- No float (32-bit), classes/inheritance, interfaces, generic constraints, generic methods inside structs, or destructors. Struct-by-value fields and inline fixed arrays inside structs aren't supported. `double` isn't available on the kernel target or through `extern`; no exponent literals (`1e6`) yet. No `~` (bitwise not) operator.
 - `async`/`await` runs on the main thread only.
 
 ---
@@ -210,7 +215,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 1. (Done: kernel boot tests in QEMU.) Next for bare metal: enable SSE at boot so `double` works there, a bootable GRUB ISO for real hardware, APIC timer, framebuffer.
 2. Commit the regression tests (see section 5).
-3. Language: a standard library (math for double, collections built on generics), exponent literals, keeping doubles in SSE registers for speed. (`+=`/`++`, `break`/`continue`, `switch`, runtime I/O errors, `double` and generics are done.)
+3. Language: collections built on generics (List, Dictionary) and string methods, exponent literals, a `~` operator, keeping doubles in SSE registers for speed. (`+=`/`++`, `break`/`continue`, `switch`, runtime I/O errors, `double` and generics are done.)
 4. (Done: string literals inside interpolation holes.)
 5. Bare metal: a GDT/TSS helper example, APIC timer, framebuffer output, a bootable ISO (GRUB) for real hardware.
 6. Performance: more loop optimizations (moving invariant arithmetic out of loops, strength reduction), fewer redundant moves, unrolling. JSON is still 1.4x behind C.
