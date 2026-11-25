@@ -101,33 +101,81 @@ static class Elf {
 }
 
 static class Program {
+    // Exit codes: 0 ok, 1 errors in the program, 2 bad command line, 3 internal compiler error.
+    const int ExitUsage = 2, ExitInternal = 3;
+    const int CompilerStackBytes = 256 * 1024 * 1024;   // deep nesting must not overflow the 1 MB default
+    static string? _currentFile;
+
     static int Main(string[] args) {
-        if (args.Length >= 2 && args[0] == "check") return RunCheck(args[1]);
-        if (args.Length >= 2 && args[0] == "complete") return RunComplete(args);
-        if (args.Length < 2 || (args[0] != "build" && args[0] != "run")) {
-            Console.Error.WriteLine("usage:");
-            Console.Error.WriteLine("  forgec <build|run> <file.fg> [-o out] [--target win|linux|kernel] [-O0] [--interp /lib/ld-musl-x86_64.so.1]");
-            Console.Error.WriteLine("  forgec check <file.fg>                  # lint: errors + warnings, no binary");
-            Console.Error.WriteLine("  forgec complete <file.fg> <line> <col>  # autocomplete candidates at a position");
-            return 2;
-        }
+        // Run on a thread with a big stack, and turn any unexpected exception into a
+        // one-line "internal compiler error" instead of a .NET stack trace.
+        int rc = ExitInternal;
+        var t = new System.Threading.Thread(() => {
+            try { rc = RealMain(args); }
+            catch (Exception ex) { rc = InternalError(ex); }
+        }, CompilerStackBytes);
+        t.Start();
+        t.Join();
+        return rc;
+    }
+
+    static int InternalError(Exception ex) {
+        Console.Out.Flush();
+        string where = _currentFile != null ? $"{_currentFile}: " : "";
+        Console.Error.WriteLine($"{where}internal compiler error: {ex.GetType().Name}: {ex.Message}");
+        if (Environment.GetEnvironmentVariable("FORGE_DEBUG") == "1") Console.Error.WriteLine(ex);
+        else Console.Error.WriteLine("This is a bug in forgec, not in your program. Please report it with the source file at");
+        Console.Error.WriteLine("https://github.com/Tajbiul-Rawol/Forge/issues  (set FORGE_DEBUG=1 for a stack trace)");
+        return ExitInternal;
+    }
+
+    static int Usage(string? problem = null) {
+        if (problem != null) Console.Error.WriteLine($"forgec: {problem}");
+        Console.Error.WriteLine("usage:");
+        Console.Error.WriteLine("  forgec <build|run> <file.fg> [-o out] [--target win|linux|kernel] [-O0] [--interp /lib/ld-musl-x86_64.so.1]");
+        Console.Error.WriteLine("  forgec check <file.fg>                  # lint: errors + warnings, no binary");
+        Console.Error.WriteLine("  forgec complete <file.fg> <line> <col>  # autocomplete candidates at a position");
+        return ExitUsage;
+    }
+
+    // Print collected errors as  file:line: error: message  plus a count line.
+    static void PrintErrors(TextWriter w, string path, IEnumerable<Diagnostic> errors) {
+        int n = 0;
+        foreach (var e in errors) { w.WriteLine($"{path}:{e.Line}: error: {e.Message}"); n++; }
+        string more = n >= CodeGen.MaxErrors ? " (stopped after the first " + CodeGen.MaxErrors + ")" : "";
+        w.WriteLine($"{path}: {n} error{(n == 1 ? "" : "s")}{more}.");
+    }
+
+    static int RealMain(string[] args) {
+        if (args.Length == 0 || args[0] is "-h" or "--help" or "help") return Usage();
+        if (args[0] == "check") return args.Length == 2 ? RunCheck(args[1]) : Usage("check takes exactly one file");
+        if (args[0] == "complete") return RunComplete(args);
+        if (args[0] != "build" && args[0] != "run") return Usage($"unknown command '{args[0]}'");
+        if (args.Length < 2) return Usage($"{args[0]}: missing source file");
         string cmd = args[0], path = args[1];
         string outPath = Path.GetFileNameWithoutExtension(path);
         Target target = Target.Windows;   // Windows first, per the brief
         bool optimize = true;
         string? interp = null;
         for (int i = 2; i < args.Length; i++) {
-            if (args[i] == "-o" && i + 1 < args.Length) outPath = args[++i];
-            else if (args[i] == "-O0") optimize = false;      // disable the optimizer (debugging / comparison)
-            else if (args[i] == "--interp" && i + 1 < args.Length) interp = args[++i];   // Linux dynamic loader (externs)
-            else if (args[i] == "--target" && i + 1 < args.Length) {
+            string a = args[i];
+            bool needsValue = a is "-o" or "--interp" or "--target";
+            if (needsValue && i + 1 >= args.Length) return Usage($"option '{a}' needs a value");
+            if (a == "-o") outPath = args[++i];
+            else if (a == "-O0") optimize = false;      // disable the optimizer (debugging / comparison)
+            else if (a == "--interp") interp = args[++i];   // Linux dynamic loader (externs)
+            else if (a == "--target") {
                 string t = args[++i];
-                target = t is "win" or "windows" ? Target.Windows
+                Target? parsed = t is "win" or "windows" ? Target.Windows
                        : t is "linux" or "elf" ? Target.Linux
                        : t is "kernel" or "bare" ? Target.Kernel
-                       : throw new ArgumentException($"unknown target '{t}'");
+                       : null;
+                if (parsed == null) return Usage($"unknown target '{t}' (expected win, linux or kernel)");
+                target = parsed.Value;
             }
+            else return Usage($"unknown option '{a}'");
         }
+        _currentFile = path;
         if (target == Target.Windows && !outPath.EndsWith(".exe")) outPath += ".exe";
         if (target == Target.Kernel && !outPath.EndsWith(".elf")) outPath += ".elf";
 
@@ -141,7 +189,11 @@ static class Program {
             var cg = new CodeGen(mod, target) { OptimizeEnabled = optimize };
             if (interp != null) cg.LinuxInterp = interp;
             var image = cg.LowerToFile();
-            File.WriteAllBytes(outPath, image);
+            try { File.WriteAllBytes(outPath, image); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
+                Console.Error.WriteLine($"forgec: cannot write {outPath}: {ex.Message}");
+                return 1;
+            }
             foreach (var w in cg.Warnings)
                 Console.Error.WriteLine($"{path}:{w.Line}: warning: {w.Message}");
 
@@ -198,6 +250,9 @@ static class Program {
         } catch (ForgeException fe) {
             Console.Error.WriteLine($"{path}:{fe.Line}: error: {fe.Message}");
             return 1;
+        } catch (ForgeErrors fes) {
+            PrintErrors(Console.Error, path, fes.Errors);
+            return 1;
         }
     }
 
@@ -206,6 +261,7 @@ static class Program {
         string src;
         try { src = File.ReadAllText(path); }
         catch (Exception ex) { Console.Error.WriteLine($"cannot read {path}: {ex.Message}"); return 1; }
+        _currentFile = path;
         try {
             var mod = new Parser(new Lexer(src).Lex()).ParseModule();
             var cg = new CodeGen(mod, Target.Windows);
@@ -219,6 +275,9 @@ static class Program {
         } catch (ForgeException fe) {
             Console.WriteLine($"{path}:{fe.Line}: error: {fe.Message}");
             Console.WriteLine($"{path}: 1 error.");
+            return 1;
+        } catch (ForgeErrors fes) {
+            PrintErrors(Console.Out, path, fes.Errors);
             return 1;
         }
     }

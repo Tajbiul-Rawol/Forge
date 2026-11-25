@@ -1,0 +1,3 @@
+literals.fg:5: error: integer literal '99999999999999999999' is too large (the largest is 9223372036854775807)
+literals.fg: 1 error.
+exit: 1

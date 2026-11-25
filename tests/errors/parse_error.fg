@@ -1,0 +1,6 @@
+// Syntax errors are reported with a line number.
+module parse;
+
+void Main() {
+    int x = (1 + ;
+}

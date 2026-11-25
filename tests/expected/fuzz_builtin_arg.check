@@ -1,0 +1,3 @@
+fuzz_builtin_arg.fg:45: error: use of undeclared variable 'externstart'
+fuzz_builtin_arg.fg: 1 error.
+exit: 1

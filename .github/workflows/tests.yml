@@ -19,3 +19,19 @@ jobs:
       - name: Regression tests
         shell: bash
         run: tests/run.sh
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Fuzz the compiler (fixed seed, so failures reproduce)
+        run: dotnet run -c Release --project tests/fuzz -- 3000 1
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: tests/fuzz/crashes/

@@ -27,3 +27,8 @@ out/
 
 # Files written by examples when run from examples/
 examples/*.txt
+
+# Fuzzer
+tests/fuzz/bin/
+tests/fuzz/obj/
+tests/fuzz/crashes/

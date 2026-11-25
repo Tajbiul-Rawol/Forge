@@ -16,7 +16,6 @@ static class Elf32 {
         const int EHSIZE = 52;       // ELF32 header
         const int PHSIZE = 32;       // ELF32 program header
         int phoff = EHSIZE;
-        int headers = EHSIZE + PHSIZE;
         int fileImgOff = 0x1000;     // place the image one page into the file
 
         var buf = new List<byte>();

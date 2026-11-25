@@ -11,6 +11,12 @@ sealed class ForgeException : Exception {
     public ForgeException(string msg, int line) : base(msg) { Line = line; }
 }
 
+// Several errors at once (the type checker keeps going after the first one).
+sealed class ForgeErrors : Exception {
+    public readonly List<Diagnostic> Errors;
+    public ForgeErrors(List<Diagnostic> errors) : base($"{errors.Count} error(s)") { Errors = errors; }
+}
+
 // ----------------------------------------------------------------- tokens
 enum TokKind { Id, Kw, Int, Float, Str, Op, Eof }
 
@@ -36,7 +42,7 @@ sealed class Lexer {
     static readonly string[] TwoChar = { "<<", ">>", "<=", ">=", "==", "!=", "&&", "||" };
 
     readonly string _s; int _i; int _line = 1;
-    public Lexer(string s) { _s = s; }
+    public Lexer(string s, int firstLine = 1) { _s = s; _line = firstLine; }
 
     char Cur => _i < _s.Length ? _s[_i] : '\0';
     char Nxt => _i + 1 < _s.Length ? _s[_i + 1] : '\0';
@@ -93,6 +99,8 @@ sealed class Lexer {
             while (_i < _s.Length && Uri.IsHexDigit(_s[_i])) _i++;
             string hex = _s.Substring(hstart, _i - hstart);
             if (hex.Length == 0) throw new ForgeException("malformed hex literal", line);
+            if (hex.TrimStart('0').Length > 16)
+                throw new ForgeException($"hex literal '0x{hex}' does not fit in 64 bits", line);
             return new Tok(TokKind.Int, "0x" + hex, line, iv: Convert.ToInt64(hex, 16));
         }
         while (_i < _s.Length && char.IsDigit(_s[_i])) _i++;
@@ -102,9 +110,10 @@ sealed class Lexer {
             while (_i < _s.Length && char.IsDigit(_s[_i])) _i++;
         }
         string txt = _s.Substring(start, _i - start);
-        return isFloat
-            ? new Tok(TokKind.Float, txt, line, fv: double.Parse(txt, CultureInfo.InvariantCulture))
-            : new Tok(TokKind.Int, txt, line, iv: long.Parse(txt, CultureInfo.InvariantCulture));
+        if (isFloat) return new Tok(TokKind.Float, txt, line, fv: double.Parse(txt, CultureInfo.InvariantCulture));
+        if (!long.TryParse(txt, NumberStyles.None, CultureInfo.InvariantCulture, out long iv))
+            throw new ForgeException($"integer literal '{txt}' is too large (the largest is 9223372036854775807)", line);
+        return new Tok(TokKind.Int, txt, line, iv: iv);
     }
 
     Tok LexWord() {
@@ -668,8 +677,10 @@ sealed class Parser {
                     if (d == ':' && depth == 1) { fmt = ""; j++; while (j < raw.Length && raw[j] != '}') { fmt += raw[j]; j++; } break; }
                     inner.Append(d); j++;
                 }
-                var sub = new Parser(new Lexer(inner.ToString()).Lex(), _structs);
+                var sub = new Parser(new Lexer(inner.ToString(), line).Lex(), _structs);
                 var e = sub.ParseExpr();
+                if (sub.Cur.Kind != TokKind.Eof)
+                    throw new ForgeException($"unexpected '{sub.Cur.Text}' in interpolation hole {{{inner}}}", line);
                 parts.Add((e, fmt));
                 k = j;
             } else sb.Append(c);

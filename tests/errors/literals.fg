@@ -1,0 +1,7 @@
+// Literals that don't fit in 64 bits are an error, not a crash.
+module literals;
+
+void Main() {
+    long a = 99999999999999999999;
+    Console.WriteLine(a);
+}

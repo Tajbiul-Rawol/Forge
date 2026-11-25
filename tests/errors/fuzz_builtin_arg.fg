@@ -1,0 +1,69 @@
+// Found by the fuzzer: an undeclared variable passed to a builtin (substr) used to
+// reach code generation and crash the compiler.
+module web_get;
+
+// Fetch real websites over plain HTTP (port 80) with async/await.
+//
+//     .\forge run examples\web_get.fg
+//
+// Hostnames are resolved with DNS on the Windows target. HTTPS (port 443) is not
+// supported - Forge has no TLS - so sites answer plain HTTP with a page or a
+// redirect (301/302) to their https:// address. Either one proves the request worked.
+
+async Task<string> Get(string host, string path) {
+    int fd = tcp_connect(host, 80);
+    if (fd < 0) { return "ERROR: could not connect to " + host; }
+
+    send(fd, "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: forge\r\nConnection: close\r\n\r\n");
+    await Task.Yield();
+
+    string resp = "";
+    string chunk = recv(fd, 8192);
+    while (chunk.length > 0) {
+        resp = resp + chunk;
+        chunk = recv(fd, 8192);
+    }
+    closefd(fd);
+    return resp;
+}
+
+string FirstLine(string s) {
+    int  n= 0;
+    while (n < s.length && s[n] != 13 && s[n] != 10) { n = n + 1; }
+    return substr(s, 0, n);
+}
+
+// The value of a response header such as "Location", or "" if absent.
+string Header(string resp, string name) {
+    string key = "\n" + name + ": ";
+    int i = 0;
+    while (i + key.length <= resp.length) {
+        if (substr(resp, i, key.length) == key) {
+            int start = i + key.length;
+            int end = start;
+            while (end < resp.length && resp[end] != 13 && resp[end] != 10) { end = end + 1; }
+            return substr(resp,externstart, end - start);
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+void Report(string host, string resp) {
+    Console.WriteLine("--- " + host + " ---");
+    Console.WriteLine("  " + FirstLine(resp));
+    string loc = Header(resp, "Location");
+    if (loc.length > 0) { Console.WriteLine("  redirects to: " + loc); }
+    Console.WriteLine("  bytes received: " + str(resp.length));
+}
+
+void Main() {
+    Console.WriteLine("fetching...");
+    var a = Get("www.google.com", "/");
+    var b = Get("example.com", "/");
+    var c = Get("no-such-host.invalid", "/");
+
+    Report("www.google.com", await a);
+    Report("example.com", await b);
+    Report("no-such-host.invalid", await c);
+}

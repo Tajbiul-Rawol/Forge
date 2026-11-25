@@ -1,0 +1,3 @@
+no_main.fg:1: error: no Main function found
+no_main.fg: 1 error.
+exit: 1

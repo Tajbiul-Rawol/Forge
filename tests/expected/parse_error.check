@@ -1,0 +1,3 @@
+parse_error.fg:5: error: unexpected token ';' in expression
+parse_error.fg: 1 error.
+exit: 1
