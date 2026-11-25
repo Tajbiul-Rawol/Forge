@@ -39,8 +39,7 @@ void Main() {
 
     n = writefile("data.txt", "hello");
     Console.WriteLine($"write: {n} failed={Failed()}");
-    string back = readfile("data.txt");
-    Console.WriteLine($"read: [{back}] failed={Failed()}");
+    Console.WriteLine($"read: [{readfile("data.txt")}] failed={Failed()}");
 
     n = writefile("no_such_dir/x.txt", "data");
     Console.WriteLine($"write into a missing folder: {n} failed={Failed()}");
@@ -68,8 +67,7 @@ void Main() {
     Console.WriteLine($"try listen again: {fd2}");
     Console.WriteLine($"close: {closefd(srv)} failed={Failed()}");
     Console.WriteLine($"close again: {closefd(srv)} failed={Failed()}");
-    int sent = send(srv, "x");
-    Console.WriteLine($"send on a closed socket: {sent} failed={Failed()}");
+    Console.WriteLine($"send on a closed socket: {send(srv, "x")} failed={Failed()}");
     string got = recv(srv, 16);
     Console.WriteLine($"recv on a closed socket: [{got}] failed={Failed()}");
     Console.WriteLine($"accept on a closed socket: {accept(srv)} failed={Failed()}");

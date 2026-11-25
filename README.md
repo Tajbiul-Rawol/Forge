@@ -276,7 +276,8 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
 - hex literals (`0xDEADBEEF`), bitwise ops `& | ^ << >>`, `malloc(n)` for raw
   heap bytes, and `putc(ch)` to emit one byte to stdout
 - `Console.WriteLine("text")`, `Console.WriteLine(intExpr)`, and `$"..."`
-  string literals with `{expr}` holes
+  string literals with `{expr}` holes; a hole can hold any expression, including
+  string literals and nested `$"..."` (`$"file: {readfile("a.txt")}"`)
 - typed errors:
   - `int F(...) throws SomeError { ... throw new SomeError("msg"); ... }`
   - `var v = try F(a) else fallback;`  — handle inline

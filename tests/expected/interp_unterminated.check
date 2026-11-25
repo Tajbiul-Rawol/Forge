@@ -1,0 +1,3 @@
+interp_unterminated.fg:5: error: unterminated string
+interp_unterminated.fg: 1 error.
+exit: 1

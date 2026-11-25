@@ -107,6 +107,9 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
 
+### Session: string literals in interpolation holes (2026-11-25)
+- `$"..."` is lexed by `LexInterpString`: text outside holes is unescaped, holes are kept verbatim, and a string literal inside a hole is skipped whole with `Lexer.StringEnd` (which also skips the holes of a nested `$"..."`). `ParseInterp` uses `StringEnd` too, so braces and colons inside a nested literal no longer end the hole or start a format. All 160 example binaries are byte-identical.
+
 ### Session: runtime I/O errors (2026-11-25)
 - `ioerr()` builtin: per-thread error code of the last I/O builtin, stored at arena block +48 (`BlkIoErr`, zeroed for each thread). Set by `io_ok` / `io_err_win` (TEB LastErrorValue, gs:[0x68]) / `io_err_neg` (-rax from a syscall), emitted in `EmitIoStatus`.
 - All failures now return -1 (or "" for readfile/recv) on both systems; Linux used to return raw -errno from close/send/accept.
@@ -164,7 +167,6 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 - **The kernel features have never been booted.** No QEMU on this machine. Encodings were checked with dumpbin, but `kernel_os.fg` is untested at run time. Next step: `winget install qemu`, then `qemu-system-x86_64 -kernel os.elf -serial stdio`.
 - **glibc dynamic linking is untested** (only musl was available). The default `--interp` is `/lib64/ld-linux-x86-64.so.2`.
-- A string literal inside `{...}` of an interpolated string doesn't parse (the lexer ends the string early).
 - Syntax errors stop the compile at the first one (type errors are all reported). Errors have a line but no column.
 - `ioerr()` gives the OS error code, not a portable one: compare codes per OS, or just test `!= 0`. `try` on a builtin cannot tell you the code either (use `ioerr()` after it). `tcp_connect` on Linux takes IP addresses only (no DNS without libc); a host name fails with EINVAL (22).
 - Interrupt handlers must not allocate while interrupting code that also allocates (the allocator isn't reentrant).
@@ -180,7 +182,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 1. Install QEMU and boot-test `kernel_os.fg` (interrupts, keyboard, paging, shell). Fix what breaks.
 2. Commit the regression tests (see section 5).
 3. Language: `double` arithmetic, generics. (`+=`/`++`, `break`/`continue`, `switch` and runtime I/O errors are done.)
-4. Allow string literals inside interpolation holes.
+4. (Done: string literals inside interpolation holes.)
 5. Bare metal: a GDT/TSS helper example, APIC timer, framebuffer output, a bootable ISO (GRUB) for real hardware.
 6. Performance: more loop optimizations (moving invariant arithmetic out of loops, strength reduction), fewer redundant moves, unrolling. JSON is still 1.4x behind C.
 7. Measure C, C++, Rust and C# multithreaded HTTP on Linux (needs Docker Desktop running, or toolchains in WSL).
