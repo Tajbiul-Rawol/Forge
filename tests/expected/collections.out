@@ -1,0 +1,13 @@
+8 digits, sorted: 1, 1, 2, 3, 4, 5, 6, 9
+edited: 100, 1, 2, 3, 4, 5, 6  contains 5: 1  index of 9: -1
+cart: 3 items, total 43.75
+9 distinct words; repeated: the=3
+has 'fox': 1, has 'cat': 0
+squares: 100000 entries, 99999^2 = 9999800001
+[Forge: a C#-like language] length 25
+upper: FORGE: A C#-LIKE LANGUAGE  lower: forge: a c#-like language
+StartsWith(Forge): 1  EndsWith(language): 1  Contains(C#): 1
+IndexOf(a): 7  Substring(7): a C#-like language  Substring(0, 5): Forge
+Forge: a C#-like compiler
+year 2026, month 11, day 26
+exit: 0

@@ -40,6 +40,7 @@ interp_strings  win,linux   run
 doubles         win,linux   run
 generics        win,linux   run
 math            win,linux   run
+collections     win,linux   run
 
 ffi_linux       linux       glibc
 ffi_glibc       linux       glibc

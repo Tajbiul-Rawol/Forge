@@ -107,6 +107,12 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
 
+### Session: collections and strings (2026-11-26)
+- `StdLib.CollectionsSource` (Forge): `List<T>`, `Dictionary<K,V>` (open addressing, linear probing, tombstones), `StringBuilder`, string methods (`__str_*`), `__fail` (print + exit 1). `__hash(x)` / `__less(a,b)` in the library are resolved by argument type (`ResolveLibDispatch`); `s.Name(..)` on a string by `ResolveStringMethod`.
+- `StdLib.Inject` now adds library types (List/Dictionary/StringBuilder, unless the program declares its own) and functions by closure over calls and type names. The parser knows those three names as types.
+- Methods of generic structs are instantiated lazily, on first call (`InstantiateMethod`), so `List<Point>` needn't type-check `Sort`.
+- `foreach (var x in coll)`: parsed in `ParseLoop` (labels as for `for`), lowered in `LowerForeach` to a for loop over an index for arrays, strings and `List<T>`; `BlockStmt` lets one statement lower to several (`LowerBody` flattens it). `.Length` is accepted for strings and arrays; string literals take postfix operators (`"a,b".Split(",")`).
+
 ### Session: Math library (2026-11-26)
 - `StdLib.cs`: the standard library as Forge source, injected per program with only the functions it calls (transitively). The parser turns `Math.Name(..)` into a call named "Math.Name" and `Math.PI/E/Tau` into constants; `ResolveMathCall` maps it (int or double versions of Abs/Min/Max/Sign/Clamp by argument type). `Math.Sqrt` is the `__sqrt` builtin (sqrtsd).
 - exp, log, log10, log2, pow (e_pow.c), sin/cos (k_sin, k_cos, rem_pio2 medium), atan, atan2 are fdlibm ports using `__hi/__lo/__make` for the IEEE words; floor/ceiling/round/truncate are exact SSE2-only code. Measured against .NET on 4,000 random inputs per function and 1,264 edge cases: within 1 ulp (tan and asin 2 ulp). A first pow (x^n * exp(f log x)) was 11 ulp off, hence the e_pow port.
@@ -215,7 +221,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 1. (Done: kernel boot tests in QEMU.) Next for bare metal: enable SSE at boot so `double` works there, a bootable GRUB ISO for real hardware, APIC timer, framebuffer.
 2. Commit the regression tests (see section 5).
-3. Language: collections built on generics (List, Dictionary) and string methods, exponent literals, a `~` operator, keeping doubles in SSE registers for speed. (`+=`/`++`, `break`/`continue`, `switch`, runtime I/O errors, `double` and generics are done.)
+3. Language: indexers (`list[i]`, `dict[key]`), exponent literals, a `~` operator, keeping doubles in SSE registers, keeping doubles in SSE registers for speed. (`+=`/`++`, `break`/`continue`, `switch`, runtime I/O errors, `double` and generics are done.)
 4. (Done: string literals inside interpolation holes.)
 5. Bare metal: a GDT/TSS helper example, APIC timer, framebuffer output, a bootable ISO (GRUB) for real hardware.
 6. Performance: more loop optimizations (moving invariant arithmetic out of loops, strength reduction), fewer redundant moves, unrolling. JSON is still 1.4x behind C.

@@ -1,0 +1,14 @@
+// Misusing the collections, foreach and string methods gives clear errors at the call.
+module m;
+struct Point { int x; }
+void Main() {
+    var pts = new List<Point> { };
+    pts.Sort();
+    foreach (var x in 42) { }
+    foreach (string s in new int[3]) { }
+    string t = "abc";
+    bool b = t.Containz("a");
+    string u = t.Substring(1, 2, 3);
+    var d = new Dictionary<string, int> { };
+    d.Frob();
+}

@@ -128,13 +128,33 @@ sealed partial class CodeGen {
             Line = sd.Line, Name = inst, Packed = sd.Packed,
             Fields = sd.Fields.Select(fl => (SubstType(fl.Type, map, sd.Name, inst), fl.Name)).ToList(),
         };
-        var methods = _genericMethods[sd.Name].Select(m => CloneFunc(m, map, inst + m.Name[sd.Name.Length..], sd.Name, inst)).ToList();
         AddStruct(copy);                          // registered first: a field may be this very type (Node<T> next)
+        _structInstances[inst] = (sd, map);
         foreach (var (t, _) in copy.Fields) EnsureType(t, sd.Line);
         if (_registered) LayoutStruct(_structs[inst]);
-        foreach (var m in methods) { AddFunc(m); EnsureTypesIn(m); }
         return inst;
     }
+
+    // Methods of a generic struct are instantiated when first called, so List<string>
+    // doesn't have to type-check a Sort() it never uses (Sort compares with <).
+    readonly Dictionary<string, (StructDecl Template, Dictionary<string, string> Map)> _structInstances = new();
+
+    bool InstantiateMethod(string inst, string method) {
+        if (!_structInstances.TryGetValue(inst, out var si)) return false;
+        string tname = si.Template.Name + "." + method;
+        var tm = _genericMethods[si.Template.Name].FirstOrDefault(m => m.Name == tname);
+        if (tm == null) return false;
+        var f = CloneFunc(tm, si.Map, inst + "." + method, si.Template.Name, inst);
+        AddFunc(f);
+        EnsureTypesIn(f);
+        return true;
+    }
+
+    // the method names a struct type offers (for "did you mean" hints)
+    IEnumerable<string> MethodsOf(string st) =>
+        _structInstances.TryGetValue(st, out var si)
+            ? _genericMethods[si.Template.Name].Select(m => m.Name[(si.Template.Name.Length + 1)..])
+            : _funcs.Keys.Where(k => k.StartsWith(st + ".")).Select(k => k[(st.Length + 1)..]);
 
     // A generic call: pick (or infer) the type arguments, instantiate, and point the
     // call at the instance. Called by TypeOf before the call is checked.
@@ -250,6 +270,8 @@ sealed class GenericCloner {
             LabelStmt l => new LabelStmt { Name = L(l.Name) },
             GotoStmt g => new GotoStmt { Name = L(g.Name) },
             InlineRet ir => new InlineRet { E = ir.E == null ? null : E(ir.E), End = L(ir.End) },
+            ForeachStmt fo => new ForeachStmt { DeclType = fo.DeclType == null ? null : T(fo.DeclType, fo.Line), Name = fo.Name, Coll = E(fo.Coll), Body = Body(fo.Body)! },
+            BlockStmt bl => new BlockStmt { Body = Body(bl.Body)! },
             _ => throw new InvalidOperationException("generics: cannot copy statement " + s.GetType().Name),
         };
         r.Line = s.Line;

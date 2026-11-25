@@ -200,6 +200,7 @@ void __rt_drain() {{
         IfStmt i => ExprAwaits(i.Cond) || BodyAwaits(i.Then) || (i.Else != null && BodyAwaits(i.Else)),
         WhileStmt w => ExprAwaits(w.Cond) || BodyAwaits(w.Body),
         ForStmt f => StmtAwaits(f.Init) || ExprAwaits(f.Cond) || StmtAwaits(f.Step) || BodyAwaits(f.Body),
+        ForeachStmt fe => ExprAwaits(fe.Coll) || BodyAwaits(fe.Body),
         RetStmt r => ExprAwaits(r.E),
         PrintStmt p => ExprAwaits(p.Arg),
         ExprStmt e => ExprAwaits(e.E),
