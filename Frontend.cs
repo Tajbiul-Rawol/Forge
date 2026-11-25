@@ -205,7 +205,7 @@ sealed class BoolLit : Expr { public bool Val; }
 sealed class VarRef  : Expr { public string Name = ""; }
 sealed class Unary   : Expr { public string Op = ""; public Expr E = null!; }
 sealed class Binary  : Expr { public string Op = ""; public Expr L = null!, R = null!; }
-sealed class CallExpr: Expr { public string Name = ""; public List<Expr> Args = new(); public bool NoInline; }
+sealed class CallExpr: Expr { public string Name = ""; public List<Expr> Args = new(); public bool NoInline; public List<string>? TypeArgs; }   // TypeArgs: Max<int>(...)
 sealed class TryExpr : Expr { public CallExpr Call = null!; public Expr? Else; }
 sealed class Interp  : Expr { public List<object> Parts = new(); } // string | (Expr, fmt)
 sealed class NewArray: Expr { public string ElemType = ""; public Expr Size = null!; }
@@ -259,11 +259,17 @@ sealed class Func : Node {
     public bool IsInterrupt;  // 'interrupt' handler: entered by the CPU, returns with iretq (address &Name)
     public List<(string Type, string Name)> ExtraLocals = new(); // optimizer temporaries
     public List<Stmt> Body = new();
+    // generics: a template has TypeParams (a method of a generic struct also names its
+    // GenericOwner); an instance (Max<int>, List<int>.Add) records what it came from.
+    public List<string>? TypeParams;
+    public string? GenericOwner;
+    public string? InstanceOf;
 }
 sealed class StructDecl : Node {
     public string Name = "";
     public bool Packed;                                   // no padding between fields
     public List<(string Type, string Name)> Fields = new();
+    public List<string>? TypeParams;                      // struct List<T> { ... }
 }
 // extern "user32.dll" i32 MessageBoxA(long hwnd, string text, string caption, u32 type);
 sealed class ExternDecl : Node {
@@ -283,13 +289,78 @@ sealed class Parser {
         "i8","u8","i16","u16","i32","u32","i64","u64" };
     readonly List<Tok> _t; int _i;
     readonly HashSet<string> _structs;                   // struct names declared anywhere in the file
-    public Parser(List<Tok> t, HashSet<string>? structs = null) {
+    // generics, found by a pre-scan so they can be used before their declaration:
+    readonly HashSet<string> _genericStructs = new();    // struct List<T>
+    readonly HashSet<string> _genericFuncs = new();      // T Max<T>(...)
+    readonly Dictionary<int, List<string>> _genericSigAt = new();   // token index of a generic function's name -> its type parameters
+    HashSet<string> _typeParams = new();                 // type parameters in scope while parsing a generic declaration
+    readonly List<(int At, Tok Was)> _angleSplits = new();   // '>>' tokens split while closing type arguments
+
+    public Parser(List<Tok> t, HashSet<string>? structs = null, Parser? outer = null) {
         _t = t;
         _structs = structs ?? new();
-        for (int k = 0; k + 1 < t.Count; k++)
-            if (t[k].Is(TokKind.Kw, "struct") && t[k + 1].Kind == TokKind.Id) _structs.Add(t[k + 1].Text);
+        if (outer != null) { _genericStructs = outer._genericStructs; _genericFuncs = outer._genericFuncs; _typeParams = outer._typeParams; }
+        for (int k = 0; k + 1 < t.Count; k++) {
+            if (t[k].Is(TokKind.Kw, "struct") && t[k + 1].Kind == TokKind.Id) {
+                _structs.Add(t[k + 1].Text);
+                if (k + 2 < t.Count && t[k + 2].Is(TokKind.Op, "<")) _genericStructs.Add(t[k + 1].Text);
+            }
+        }
+        // generic functions: at brace depth 0, Name < A, B > (
+        int depth = 0;
+        for (int k = 0; k < t.Count; k++) {
+            if (t[k].Is(TokKind.Op, "{")) depth++;
+            else if (t[k].Is(TokKind.Op, "}")) depth--;
+            else if (depth == 0 && t[k].Kind == TokKind.Id && k + 1 < t.Count && t[k + 1].Is(TokKind.Op, "<")) {
+                var ps = new List<string>();
+                int j = k + 2;
+                while (j < t.Count && t[j].Kind == TokKind.Id) {
+                    ps.Add(t[j].Text);
+                    if (j + 1 < t.Count && t[j + 1].Is(TokKind.Op, ",")) j += 2; else { j++; break; }
+                }
+                if (ps.Count > 0 && j + 1 < t.Count && t[j].Is(TokKind.Op, ">") && t[j + 1].Is(TokKind.Op, "(")
+                    && !(k > 0 && t[k - 1].Is(TokKind.Kw, "struct"))) {
+                    _genericFuncs.Add(t[k].Text);
+                    _genericSigAt[k] = ps;
+                }
+            }
+        }
     }
-    bool IsStructName(Tok t) => t.Kind == TokKind.Id && _structs.Contains(t.Text);
+    bool IsStructName(Tok t) => t.Kind == TokKind.Id && (_structs.Contains(t.Text) || _typeParams.Contains(t.Text));
+
+    // Consume one '>' that closes a type-argument list; a '>>' token (List<List<int>>)
+    // gives up one of its two '>' and stays put for the outer list.
+    void ExpectCloseAngle() {
+        if (AtOp(">")) { Eat(); return; }
+        if (AtOp(">>")) { _angleSplits.Add((_i, _t[_i])); _t[_i] = new Tok(TokKind.Op, ">", Cur.Line); return; }
+        throw new ForgeException($"expected '>' but found '{Cur.Text}'", Cur.Line);
+    }
+
+    // <T1, T2, ...> after a generic name: the type arguments in canonical form
+    List<string> ParseTypeArgs() {
+        Expect(TokKind.Op, "<");
+        var args = new List<string> { ParseType() };
+        while (Accept(TokKind.Op, ",")) args.Add(ParseType());
+        ExpectCloseAngle();
+        return args;
+    }
+
+    // a struct or type-parameter name, with type arguments for a generic struct: List<int>
+    string ParseTypeName() {
+        string n = Eat().Text;
+        if (_genericStructs.Contains(n) && AtOp("<")) n += "<" + string.Join(",", ParseTypeArgs()) + ">";
+        return n;
+    }
+
+    // <A, B> declaring type parameters
+    List<string> ParseTypeParams() {
+        Expect(TokKind.Op, "<");
+        var ps = new List<string> { ExpectId().Text };
+        while (Accept(TokKind.Op, ",")) ps.Add(ExpectId().Text);
+        Expect(TokKind.Op, ">");
+        if (ps.Distinct().Count() != ps.Count) throw new ForgeException("duplicate type parameter", Cur.Line);
+        return ps;
+    }
     // does a type start at token k?  (built-in type keyword or a struct name)
     bool TypeAt(int k) => (Peek(k).Kind == TokKind.Kw && Types.Contains(Peek(k).Text)) || IsStructName(Peek(k));
 
@@ -371,14 +442,17 @@ sealed class Parser {
         var sd = new StructDecl { Line = Cur.Line, Packed = Accept(TokKind.Kw, "packed") };
         Expect(TokKind.Kw, "struct");
         sd.Name = ExpectId().Text;
+        if (AtOp("<")) { sd.TypeParams = ParseTypeParams(); _typeParams = new HashSet<string>(sd.TypeParams); }
         Expect(TokKind.Op, "{");
         var methods = new List<Func>();
         while (!AtOp("}")) {
             int line = Cur.Line;
             string ty = ParseType();
             string name = ExpectId().Text;
+            if (AtOp("<")) throw new ForgeException($"method '{name}' can't have its own type parameters (make the struct generic instead)", line);
             if (AtOp("(")) {
                 var f = new Func { Line = line, Ret = ty, Name = sd.Name + "." + name };
+                if (sd.TypeParams != null) { f.TypeParams = sd.TypeParams; f.GenericOwner = sd.Name; }
                 f.Params.Add((sd.Name, "this"));
                 Eat();
                 if (!AtOp(")")) do { string pt = ParseType(); f.Params.Add((pt, ExpectId().Text)); } while (Accept(TokKind.Op, ","));
@@ -393,6 +467,7 @@ sealed class Parser {
             Expect(TokKind.Op, ";");
         }
         Expect(TokKind.Op, "}");
+        _typeParams = new();
         foreach (var f in methods) { new MethodScope(sd, methods).Rewrite(f); m.Funcs.Add(f); }
         m.Structs.Add(sd);
     }
@@ -409,11 +484,11 @@ sealed class Parser {
                 throw new ForgeException("nested Task<Task<...>> is not supported", line);
             string inner = ParseType();
             if (inner == "void") throw new ForgeException("use 'Task' instead of 'Task<void>'", line);
-            Expect(TokKind.Op, ">");
+            ExpectCloseAngle();
             return "Task<" + inner + ">";
         }
         if ((Cur.Kind == TokKind.Kw && Types.Contains(Cur.Text)) || IsStructName(Cur)) {
-            string t = Eat().Text;
+            string t = Cur.Kind == TokKind.Kw ? Eat().Text : ParseTypeName();   // List<int> for a generic struct
             // array type:  int[]
             if (AtOp("[") && Peek().Is(TokKind.Op, "]")) { Eat(); Eat(); t += "[]"; }
             // pointer type(s): u32*  int**
@@ -425,6 +500,17 @@ sealed class Parser {
     }
 
     Func ParseFunc() {
+        // A generic function's type parameters are in scope for its return type, which
+        // comes before them (T Max<T>(...)): take them from the pre-scan.
+        List<string>? tps = null;
+        for (int k = _i; k < _t.Count && !_t[k].Is(TokKind.Op, "(") && !_t[k].Is(TokKind.Op, "{"); k++)
+            if (_genericSigAt.TryGetValue(k, out var found)) { tps = found; break; }
+        _typeParams = tps != null ? new HashSet<string>(tps) : new();
+        try { return ParseFuncBody(tps); }
+        finally { _typeParams = new(); }
+    }
+
+    Func ParseFuncBody(List<string>? tps) {
         int fline = Cur.Line;
         bool isAsync = Accept(TokKind.Kw, "async");
         string ret = ParseType();
@@ -437,6 +523,10 @@ sealed class Parser {
             throw new ForgeException("a function returning a Task must be declared 'async'", fline);
         }
         var f = new Func { Line = fline, Ret = ret, IsAsync = isAsync, Name = ExpectId().Text };
+        if (AtOp("<")) {
+            f.TypeParams = ParseTypeParams();
+            if (tps == null || !f.TypeParams.SequenceEqual(tps)) throw new ForgeException($"bad type parameter list for '{f.Name}'", fline);
+        }
         Expect(TokKind.Op, "(");
         if (!AtOp(")")) {
             do {
@@ -829,7 +919,7 @@ sealed class Parser {
             return Postfix(new NewArray { Line = t.Line, ElemType = elem, Size = size });
         }
         if (AtKw("new") && IsStructName(Peek(1))) {
-            Eat(); string sn = Eat().Text;
+            Eat(); string sn = ParseTypeName();          // new List<int> { ... }
             if (AtOp("[")) {
                 Eat(); var size = ParseExpr(); Expect(TokKind.Op, "]");
                 return Postfix(new NewArray { Line = t.Line, ElemType = sn, Size = size });
@@ -869,6 +959,7 @@ sealed class Parser {
             // cast:  (Type) expr   -- detected by a type keyword right after '('
             if ((Peek(1).Kind == TokKind.Kw && Types.Contains(Peek(1).Text)) || AtTaskType(1)
                 || (IsStructName(Peek(1)) && (Peek(2).Is(TokKind.Op, ")") || Peek(2).Is(TokKind.Op, "*")))
+                || (_genericStructs.Contains(Peek(1).Text) && Peek(1).Kind == TokKind.Id && Peek(2).Is(TokKind.Op, "<"))
                 || (Peek(1).Is(TokKind.Id, "Task") && Peek(2).Is(TokKind.Op, ")"))) {
                 int line = Eat().Line;          // (
                 string ty = ParseType();
@@ -879,6 +970,23 @@ sealed class Parser {
         }
         if (t.Kind == TokKind.Id) {
             string name = Eat().Text;
+            // Max<int>(a, b): explicit type arguments. Tried speculatively (only for
+            // generic functions), so a comparison like  a < b  is never misread.
+            if (AtOp("<") && (_genericFuncs.Contains(name) || (Peek(1).Kind == TokKind.Kw && Types.Contains(Peek(1).Text)) || IsStructName(Peek(1)))) {
+                int save = _i, splits = _angleSplits.Count;
+                try {
+                    var targs = ParseTypeArgs();
+                    if (AtOp("(")) {
+                        Eat(); var gargs = new List<Expr>();
+                        if (!AtOp(")")) do { gargs.Add(ParseExpr()); } while (Accept(TokKind.Op, ","));
+                        Expect(TokKind.Op, ")");
+                        return Postfix(new CallExpr { Line = t.Line, Name = name, Args = gargs, TypeArgs = targs });
+                    }
+                } catch (ForgeException) { }
+                for (int k = _angleSplits.Count - 1; k >= splits; k--) _t[_angleSplits[k].At] = _angleSplits[k].Was;   // undo
+                _angleSplits.RemoveRange(splits, _angleSplits.Count - splits);
+                _i = save;
+            }
             if (AtOp("(")) {
                 Eat(); var args = new List<Expr>();
                 if (!AtOp(")")) do { args.Add(ParseExpr()); } while (Accept(TokKind.Op, ","));
@@ -940,7 +1048,7 @@ sealed class Parser {
                     if (d == ':' && depth == 1) { fmt = ""; j++; while (j < raw.Length && raw[j] != '}') { fmt += raw[j]; j++; } break; }
                     inner.Append(d); j++;
                 }
-                var sub = new Parser(new Lexer(inner.ToString(), line).Lex(), _structs);
+                var sub = new Parser(new Lexer(inner.ToString(), line).Lex(), _structs, this);
                 var e = sub.ParseExpr();
                 if (sub.Cur.Kind != TokKind.Eof)
                     throw new ForgeException($"unexpected '{sub.Cur.Text}' in interpolation hole {{{inner}}}", line);

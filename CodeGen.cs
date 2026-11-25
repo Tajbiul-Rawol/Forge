@@ -71,6 +71,7 @@ sealed partial class CodeGen {
                 throw new ForgeException("double needs --target win or linux (SSE is not enabled on bare metal yet)", doubleLine);
             DoubleRuntime.Inject(mod);           // __dtoa / __dtoaf for printing
         }
+        ExtractGenerics(mod);                    // templates out; generic struct types used by the program in (Generics.cs)
         foreach (var f in mod.Funcs) {
             if (!_funcs.TryAdd(f.Name, f))
                 throw new ForgeException($"duplicate function '{f.Name}'", f.Line);
@@ -80,6 +81,7 @@ sealed partial class CodeGen {
                 throw new ForgeException($"duplicate struct '{sd.Name}'", sd.Line);
         foreach (var sd in mod.Structs) LayoutStruct(_structs[sd.Name]);
         SetupExterns();
+        _registered = true;                      // generic instances made from now on register themselves
     }
 
     // ---- externs: functions in DLLs / shared libraries ------------------------------
@@ -447,6 +449,8 @@ sealed partial class CodeGen {
                     }
                     return exd.Ret;
                 }
+                // a generic function: instantiate it (Generics.cs) and call the instance
+                if (c.TypeArgs != null || (!_funcs.ContainsKey(c.Name) && _genericFuncs.ContainsKey(c.Name))) ResolveGenericCall(c);
                 if (c.Name.StartsWith(".")) {            // obj.Method(...) -> Struct.Method(obj, ...)
                     var ot = TypeOf(c.Args[0]);
                     if (!IsStruct(ot)) throw new ForgeException($"'{c.Name[1..]}()' needs a struct, got {ot}", c.Line);
@@ -743,7 +747,8 @@ sealed partial class CodeGen {
                     Report(new ForgeException("Main must be: void Main()", main.Line), null);
             }
 
-            foreach (var f in _mod.Funcs) {
+            for (int fi = 0; fi < _mod.Funcs.Count; fi++) {     // by index: checking a call can add a generic instance
+                var f = _mod.Funcs[fi];
                 int before = Errors.Count;
                 _poisoned.Clear(); _poisonSources.Clear();
                 Recover(null, () => {
@@ -763,6 +768,9 @@ sealed partial class CodeGen {
                 CheckUnusedLocals(f);
             }
         } catch (TooManyErrors) { }
+        // generic instances share their lines with the template: report each warning once
+        var seenW = new HashSet<(int, string)>();
+        Warnings.RemoveAll(w => !seenW.Add((w.Line, w.Message)));
         if (Errors.Count > 0) throw new ForgeErrors(Errors.OrderBy(e => e.Line).ToList());
     }
 
@@ -776,8 +784,9 @@ sealed partial class CodeGen {
         // report, but `var b = a + 1` after a failed `a` is follow-on noise.
         string? own = at is VarDecl vd && _poisonSources.Contains(at) ? vd.Name : null;
         if (at != null && _poisoned.Count > 0 && MentionsPoisoned(at, own)) return;
-        if (Errors.Any(e => e.Line == fe.Line && e.Message == fe.Message)) return;
-        Errors.Add(new Diagnostic(Severity.Error, fe.Line, fe.Message));
+        string msg = _cur?.InstanceOf != null && !fe.Message.Contains(" (in ") ? $"{fe.Message} (in {_cur.Name})" : fe.Message;
+        if (Errors.Any(e => e.Line == fe.Line && e.Message == msg)) return;
+        Errors.Add(new Diagnostic(Severity.Error, fe.Line, msg));
         if (Errors.Count >= MaxErrors) throw new TooManyErrors();
     }
     bool MentionsPoisoned(Stmt s, string? except) {

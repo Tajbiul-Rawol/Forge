@@ -1,0 +1,12 @@
+Max(3, 7) = 7
+Max<long>(10, 2) = 10
+Max(2.5, 1) = 2.5
+after Swap: x=2 y=1
+IndexOf(words, "blue") = 2
+10 squares, sum 385, last 100
+forge generics
+grid[0][2] = 9
+pi = 3.1416
+hello world
+*****
+exit: 0

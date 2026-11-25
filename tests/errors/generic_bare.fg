@@ -1,0 +1,4 @@
+// A generic struct used without type arguments.
+module m;
+struct Box<T> { T v; }
+void Main() { Box b = null; }

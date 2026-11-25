@@ -293,6 +293,7 @@ features.fg:3: error: 'D' can throw - call it with 'try'
 ```
 
 - structs with fields, methods and object initializers; `null`; `sizeof(T)`
+- generic functions and structs: `T Max<T>(T a, T b)`, `struct List<T>` (see "Generics")
 - `$"..."` interpolated strings anywhere a string is expected
 - `extern` functions from DLLs / shared libraries, and C-callable Forge functions
 - bare-metal builtins, `interrupt` handlers and `asm("...")` (see below)
@@ -314,8 +315,69 @@ Rules for the new statement forms:
 
 ### Not implemented yet (future stages)
 
-`float` (32-bit), classes with inheritance, generics, `own`/`move` and
-destructors, `comptime`, `gc`. Keep `.fg` files within the subset above.
+`float` (32-bit), classes with inheritance, interfaces and generic constraints,
+`own`/`move` and destructors, `comptime`, `gc`. Keep `.fg` files within the subset above.
+
+## Generics
+
+Functions and structs can take type parameters, as in C#. See `examples/generics.fg`.
+
+```csharp
+T Max<T>(T a, T b) {
+    if (a > b) { return a; }
+    return b;
+}
+
+struct List<T> {
+    T[] items;
+    int count;
+    void Add(T x) {
+        if (items == null) { items = new T[4]; }
+        if (count == items.length) {
+            T[] bigger = new T[items.length * 2];
+            for (int i = 0; i < count; i++) { bigger[i] = items[i]; }
+            items = bigger;
+        }
+        items[count] = x;
+        count++;
+    }
+    T Get(int i) { return items[i]; }
+}
+
+struct Pair<K, V> { K key; V value; }
+
+void Main() {
+    Console.WriteLine(Max(3, 7));             // 7: T = int, inferred from the arguments
+    Console.WriteLine(Max<long>(10, 2));      // 10: T written out
+    Console.WriteLine(Max(2.5, 1));           // 2.5: the int converts, T = double
+
+    var names = new List<string> { };
+    names.Add("forge");
+    Console.WriteLine(names.Get(0));
+
+    var grid = new List<List<int>> { };       // generic types nest
+    var p = new Pair<string, double> { key = "pi", value = 3.14 };
+}
+```
+
+- **Type parameters** can be used anywhere a type can: variables, parameters, return
+  types, `T[]`, `T*`, `new T[n]`, `sizeof(T)`, fields, and other generic types
+  (`List<T>`, `Node<T> next`).
+- **Type arguments** are inferred from the call's arguments (`Max(3, 7)`), including
+  through arrays, pointers and generic structs (`T[]`, `T*`, `List<T>`). If an `int` and a
+  `double` meet, `T` becomes `double`. Write them out when nothing can be inferred
+  (`Make<int>()`), or to choose (`Max<long>(1, 2)`).
+- **How it works:** each use with new type arguments gets its own compiled copy, named
+  after them (`List<int>`, `Max<double>`), as in C++ or Rust. Generic code runs exactly as
+  fast as hand-written code for that type. Programs that don't use generics compile to the
+  same bytes as before.
+- **Checking:** a generic body is type-checked for each set of type arguments it is used
+  with, like a C++ template. `Max("a", "b")` is an error inside `Max`, and the message
+  names the instance: `'>' needs numeric operands (in Max<string>)`. There are no
+  constraints (`where T : ...`) yet.
+- Methods of a generic struct use the struct's type parameters; a method can't have
+  type parameters of its own yet. Generic functions can't be `extern` callbacks or
+  interrupt handlers.
 
 ## Floating point (`double`)
 

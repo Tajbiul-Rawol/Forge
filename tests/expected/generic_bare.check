@@ -1,0 +1,3 @@
+generic_bare.fg:4: error: 'Box' is generic: give it type arguments, e.g. Box<int>
+generic_bare.fg: 1 error.
+exit: 1
