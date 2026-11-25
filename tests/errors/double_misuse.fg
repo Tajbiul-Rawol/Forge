@@ -1,0 +1,16 @@
+// Operations that aren't defined for double, and narrowing without a cast.
+module m;
+
+struct P { int v; }
+
+void Main() {
+    double d = 2.5;
+    string s = "x";
+    P p = new P { v = 1 };
+    double r = d % 2;
+    long bits = d & 1;
+    bool same = d == s;
+    int n = d;
+    double q = (double)p;
+    Console.WriteLine($"{d:X2}");
+}

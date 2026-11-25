@@ -162,6 +162,10 @@ if [ ${#ONLY[@]} -eq 0 ]; then
 void Main() { string s = readfile("x"); }
 ' > "$WORK/kio.fg"
     cli_case "I/O on bare metal"   1 "readfile() needs an OS"       build kio.fg --target kernel
+    printf 'module k;
+void Main() { double x = 1.5; }
+' > "$WORK/kd.fg"
+    cli_case "double on bare metal" 1 "double needs --target win"    build kd.fg --target kernel
 fi
 
 echo

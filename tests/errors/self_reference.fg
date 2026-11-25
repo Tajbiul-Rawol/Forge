@@ -1,0 +1,9 @@
+// A declaration whose initializer mentions the variable itself still reports its error.
+module m;
+
+async Task<int> Slow(int x) { await Task.Yield(); return x * 2; }
+
+void Main() {
+    var t = Slow(21) || Console.WriteLine(await t);
+    var u = missing + u;
+}

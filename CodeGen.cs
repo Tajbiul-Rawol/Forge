@@ -33,6 +33,7 @@ sealed partial class CodeGen {
     // Locals whose declaration failed to type-check: later errors that mention them are
     // follow-on noise and are not reported.
     readonly HashSet<string> _poisoned = new();
+    readonly HashSet<Stmt> _poisonSources = new(ReferenceEqualityComparer.Instance);   // the declarations that failed: never suppressed
 
     // relocations into the IAT: (codePosition, importIndex) for `mov rax,[iatSlot]`
     readonly List<(int CodePos, int ImportIdx)> _iatRelocs = new();
@@ -64,6 +65,12 @@ sealed partial class CodeGen {
         _target = target;
         _usesAsync = AsyncRuntime.Uses(mod);
         if (_usesAsync) AsyncRuntime.Inject(mod);
+        int doubleLine = DoubleRuntime.FirstUse(mod);
+        if (doubleLine > 0) {
+            if (target == Target.Kernel)
+                throw new ForgeException("double needs --target win or linux (SSE is not enabled on bare metal yet)", doubleLine);
+            DoubleRuntime.Inject(mod);           // __dtoa / __dtoaf for printing
+        }
         foreach (var f in mod.Funcs) {
             if (!_funcs.TryAdd(f.Name, f))
                 throw new ForgeException($"duplicate function '{f.Name}'", f.Line);
@@ -370,7 +377,7 @@ sealed partial class CodeGen {
             case Unary u: {
                 var t = TypeOf(u.E);
                 if (u.Op == "!") { if (t != "bool") throw new ForgeException("'!' needs a bool", u.Line); return "bool"; }
-                if (!IsInt(t)) throw new ForgeException("unary '-' needs a number", u.Line);
+                if (!IsInt(t) && t != "double") throw new ForgeException("unary '-' needs a number", u.Line);
                 return t;
             }
             case NullLit: return "null";
@@ -379,10 +386,12 @@ sealed partial class CodeGen {
                 return "int";
             case NewStruct ns: {
                 if (!IsStruct(ns.Type)) throw new ForgeException($"unknown struct '{ns.Type}'", ns.Line);
-                foreach (var (fn, fe) in ns.Inits) {
+                for (int k = 0; k < ns.Inits.Count; k++) {
+                    var (fn, fe) = ns.Inits[k];
                     var (_, ft) = FieldOf(ns.Type, fn, ns.Line);
                     var et = TypeOf(fe);
                     if (!Assignable(ft, et)) throw new ForgeException($"field '{fn}' is {ft}, got {et}", ns.Line);
+                    ns.Inits[k] = (fn, Coerce(fe, ft));
                 }
                 return ns.Type;
             }
@@ -399,6 +408,18 @@ sealed partial class CodeGen {
                 if (b.Op is "&&" or "||") {
                     if (lt != "bool" || rt != "bool") throw new ForgeException($"'{b.Op}' needs bool operands", b.Line);
                     return "bool";
+                }
+                if (lt == "double" || rt == "double") {
+                    // double arithmetic and comparisons; an int operand is converted
+                    if (!IsNum(lt) || !IsNum(rt)) {
+                        if (b.Op is "==" or "!=") throw new ForgeException($"cannot compare {lt} with {rt}", b.Line);
+                        throw new ForgeException($"'{b.Op}' needs numbers, got {lt} and {rt}", b.Line);
+                    }
+                    if (lt != "double") b.L = ToDouble(b.L);
+                    if (rt != "double") b.R = ToDouble(b.R);
+                    if (b.Op is "==" or "!=" or "<" or ">" or "<=" or ">=") return "bool";
+                    if (b.Op is "+" or "-" or "*" or "/") return "double";
+                    throw new ForgeException($"'{b.Op}' is not defined for double (only + - * / and comparisons)", b.Line);
                 }
                 if (b.Op is "==" or "!=") {
                     if (lt == rt || (IsInt(lt) && IsInt(rt))) return "bool";
@@ -467,7 +488,12 @@ sealed partial class CodeGen {
                 if (c.Name is "lidt" or "lgdt") { Need(c, 2); var t = TypeOf(c.Args[0]); if ((!IsInt(t) && !IsPtr(t) && !IsStruct(t)) || !IsInt(TypeOf(c.Args[1]))) Err(c, $"{c.Name}(base, limit)"); return "void"; }
                 if (c.Name == "getc") { Need(c, 0); return "int"; }
                 // ---- string / IO / socket builtins ----
-                if (c.Name == "str")     { Need(c, 1); var st0 = TypeOf(c.Args[0]); if (!IsInt(st0) && st0 != "bool" && !IsPtr(st0)) Err(c, "str(n) takes an integer"); return "string"; }
+                if (c.Name == "str")     {
+                    Need(c, 1); var st0 = TypeOf(c.Args[0]);
+                    if (st0 == "double") { c.Name = "__dtoa"; return "string"; }   // the double runtime formats it
+                    if (!IsInt(st0) && st0 != "bool" && !IsPtr(st0)) Err(c, "str(n) takes a number");
+                    return "string";
+                }
                 if (c.Name == "toint")   { Need(c, 1); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "toint(s) takes a string"); return "int"; }
                 if (c.Name == "strlen")  { Need(c, 1); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "strlen(s) takes a string"); return "int"; }
                 if (c.Name == "substr")  { Need(c, 3); if (!IsStr(TypeOf(c.Args[0])) || !IsInt(TypeOf(c.Args[1])) || !IsInt(TypeOf(c.Args[2]))) Err(c, "substr(s,start,len)"); return "string"; }
@@ -541,18 +567,21 @@ sealed partial class CodeGen {
                 CheckArgs(f, t.Call);
                 if (t.Else == null && _cur.Throws == null)
                     throw new ForgeException("a bare 'try' propagates - the enclosing function must declare 'throws'", t.Line);
-                if (t.Else != null) { var et = TypeOf(t.Else); if (!Assignable(f.Ret, et)) throw new ForgeException($"'else' fallback must be {f.Ret}", t.Line); }
+                if (t.Else != null) { var et = TypeOf(t.Else); if (!Assignable(f.Ret, et)) throw new ForgeException($"'else' fallback must be {f.Ret}", t.Line); t.Else = Coerce(t.Else, f.Ret); }
                 return f.Ret;
             }
             case Interp itp: {
-                foreach (var part in itp.Parts)
-                    if (part is ValueTuple<Expr, string?> hole) TypeOf(hole.Item1);   // holes must type-check too
+                for (int k = 0; k < itp.Parts.Count; k++) {
+                    if (itp.Parts[k] is not ValueTuple<Expr, string?> hole) continue;
+                    // holes must type-check too; a double hole becomes a string from the runtime
+                    if (TypeOf(hole.Item1) == "double") itp.Parts[k] = (DoubleText(hole.Item1, hole.Item2, itp.Line), (string?)null);
+                }
                 return "string";
             }
             case NewArray na: {
                 var st = TypeOf(na.Size);
                 if (!IsInt(st)) throw new ForgeException("array size must be an integer", na.Line);
-                if (!IntTypes.Contains(na.ElemType) && !IsStruct(na.ElemType) && na.ElemType != "string") throw new ForgeException($"cannot make an array of {na.ElemType}", na.Line);
+                if (!IntTypes.Contains(na.ElemType) && !IsStruct(na.ElemType) && na.ElemType is not ("string" or "double")) throw new ForgeException($"cannot make an array of {na.ElemType}", na.Line);
                 return na.ElemType + "[]";
             }
             case IndexExpr ix: {
@@ -587,6 +616,12 @@ sealed partial class CodeGen {
             }
             case CastExpr ce: {
                 var st = TypeOf(ce.E);
+                if (st == "double" || ce.TargetType == "double") {
+                    // a real conversion: (double)i, (int)d (truncates toward zero, like C#)
+                    if (!IsNum(st) || !(IsInt(ce.TargetType) || ce.TargetType == "double"))
+                        throw new ForgeException($"cannot cast {st} to {ce.TargetType}", ce.Line);
+                    return ce.TargetType;
+                }
                 if (!IsInt(st) && !IsPtr(st) && !IsTask(st) && !IsStruct(st) && !IsArray(st) && !IsStr(st) && st != "null")
                     throw new ForgeException("can only cast integers, pointers, arrays, strings, struct references and tasks", ce.Line);
                 if (!KnownType(ce.TargetType) && !IsTask(ce.TargetType)) throw new ForgeException($"unknown type '{ce.TargetType}'", ce.Line);
@@ -626,6 +661,7 @@ sealed partial class CodeGen {
                     throw new ForgeException($"'{sp.FuncName}' takes no parameters", sp.Line);
                 if (sp.Arg != null) {
                     var at = TypeOf(sp.Arg); var pt = tf.Params[0].Type;
+                    if (pt == "double" && IsInt(at)) { sp.Arg = ToDouble(sp.Arg); at = "double"; }
                     bool fits = at == pt || (IsInt(at) && IsInt(pt)) || (IsPtr(pt) && IsPtr(at)) || (IsPtr(pt) && IsInt(at));
                     if (!fits) throw new ForgeException($"spawn {sp.FuncName}: argument is {at}, parameter is {pt}", sp.Line);
                 }
@@ -636,7 +672,8 @@ sealed partial class CodeGen {
     }
 
     static string AwaitHint(string want, string got) =>
-        IsTask(got) && !IsTask(want) && Assignable(want, TaskResult(got)) ? $", got {got} (did you forget 'await'?)" : "";
+        IsTask(got) && !IsTask(want) && Assignable(want, TaskResult(got)) ? $", got {got} (did you forget 'await'?)"
+        : IsInt(want) && got == "double" ? $", got double (convert with ({want})x, which truncates toward zero)" : "";
 
     void RequireAwaitContext(int line) {
         if (!CanAwaitHere)
@@ -650,8 +687,28 @@ sealed partial class CodeGen {
             var at = TypeOf(c.Args[i]);
             if (!Assignable(f.Params[i].Type, at))
                 throw new ForgeException($"argument '{f.Params[i].Name}': expected {f.Params[i].Type}, got {at}", c.Line);
+            c.Args[i] = Coerce(c.Args[i], f.Params[i].Type);
         }
     }
+    static bool IsNum(string t) => IsInt(t) || t == "double";
+
+    // An int used where a double is expected: a literal becomes a double literal,
+    // anything else gets an explicit conversion (cvtsi2sd).
+    static Expr ToDouble(Expr e) => e is IntLit il
+        ? new FloatLit { Line = il.Line, Val = il.Val }
+        : new CastExpr { Line = e.Line, TargetType = "double", E = e };
+    Expr Coerce(Expr e, string want) => want == "double" && IsInt(TypeOf(e)) ? ToDouble(e) : e;
+
+    // the text of a double: $"{x}" / str(x) / Console.WriteLine(x) use 15 significant
+    // digits; a hole like {x:F2} gets exactly that many decimals.
+    Expr DoubleText(Expr e, string? fmt, int line) {
+        if (fmt != null && fmt.Length >= 2 && (fmt[0] is 'F' or 'f') && int.TryParse(fmt[1..], out int places) && places is >= 0 and <= 15)
+            return new CallExpr { Line = line, Name = "__dtoaf", Args = { e, new IntLit { Line = line, Val = places } } };
+        if (fmt != null && fmt.Length > 0)
+            throw new ForgeException($"unknown format '{fmt}' for a double (use F0..F15, e.g. {{x:F2}})", line);
+        return new CallExpr { Line = line, Name = "__dtoa", Args = { e } };
+    }
+
     static bool Assignable(string want, string got) =>
         want == got || (IsInt(want) && IsInt(got)) || (want == "double" && IsInt(got))
         || (got == "null" && !IntTypes.Contains(want) && want is not ("void" or "double"))
@@ -688,7 +745,7 @@ sealed partial class CodeGen {
 
             foreach (var f in _mod.Funcs) {
                 int before = Errors.Count;
-                _poisoned.Clear();
+                _poisoned.Clear(); _poisonSources.Clear();
                 Recover(null, () => {
                     if (f.IsAsync && f.Throws != null)
                         throw new ForgeException($"async function '{f.Name}' cannot declare 'throws' (not supported yet)", f.Line);
@@ -715,17 +772,21 @@ sealed partial class CodeGen {
         catch (ForgeException fe) { Report(fe, at); }
     }
     void Report(ForgeException fe, Stmt? at) {
-        if (at != null && _poisoned.Count > 0 && MentionsPoisoned(at)) return;
+        // A failed declaration ignores its own name here: `var t = f(t)` must still
+        // report, but `var b = a + 1` after a failed `a` is follow-on noise.
+        string? own = at is VarDecl vd && _poisonSources.Contains(at) ? vd.Name : null;
+        if (at != null && _poisoned.Count > 0 && MentionsPoisoned(at, own)) return;
         if (Errors.Any(e => e.Line == fe.Line && e.Message == fe.Message)) return;
         Errors.Add(new Diagnostic(Severity.Error, fe.Line, fe.Message));
         if (Errors.Count >= MaxErrors) throw new TooManyErrors();
     }
-    bool MentionsPoisoned(Stmt s) {
+    bool MentionsPoisoned(Stmt s, string? except) {
+        bool P(string n) => n != except && _poisoned.Contains(n);
         bool hit = false;
         Walker.WalkStmt(s, e => {
-            if (e is VarRef vr && _poisoned.Contains(vr.Name)) hit = true;
-            else if (e is AddrOf ao && _poisoned.Contains(ao.Name)) hit = true;
-        }, st => { if (st is Assign a && _poisoned.Contains(a.Name)) hit = true; });
+            if (e is VarRef vr && P(vr.Name)) hit = true;
+            else if (e is AddrOf ao && P(ao.Name)) hit = true;
+        }, st => { if (st is Assign a && P(a.Name)) hit = true; });
         return hit;
     }
     sealed class TooManyErrors : Exception { }
@@ -800,7 +861,7 @@ sealed partial class CodeGen {
                 case VarDecl v: {
                     string t;
                     try { t = v.DeclType ?? TypeOf(v.E); }
-                    catch (ForgeException) { _poisoned.Add(v.Name); break; }   // reported when the statement is checked
+                    catch (ForgeException) { _poisoned.Add(v.Name); _poisonSources.Add(v); break; }   // reported when the statement is checked
                     AddLocal(v.Name, t);
                     break;
                 }
@@ -999,8 +1060,8 @@ sealed partial class CodeGen {
 
     void CheckStmt(Stmt s) {
         switch (s) {
-            case VarDecl v: { var t = TypeOf(v.E); if (t == "void") throw new ForgeException($"'{v.Name}' cannot hold the result of an expression with no value (void)", v.Line); if (v.DeclType != null && !Assignable(v.DeclType, t)) throw new ForgeException($"initializer of '{v.Name}' must be {v.DeclType}" + AwaitHint(v.DeclType, t), v.Line); break; }
-            case Assign a: { if (!_locals.TryGetValue(a.Name, out var li)) throw new ForgeException($"assignment to undeclared '{a.Name}'", a.Line); var at0 = TypeOf(a.E); if (!Assignable(li.Type, at0)) throw new ForgeException($"assignment to '{a.Name}' type mismatch" + AwaitHint(li.Type, at0), a.Line); break; }
+            case VarDecl v: { var t = TypeOf(v.E); if (t == "void") throw new ForgeException($"'{v.Name}' cannot hold the result of an expression with no value (void)", v.Line); if (v.DeclType != null && !Assignable(v.DeclType, t)) throw new ForgeException($"initializer of '{v.Name}' must be {v.DeclType}" + AwaitHint(v.DeclType, t), v.Line); if (v.DeclType != null) v.E = Coerce(v.E, v.DeclType); break; }
+            case Assign a: { if (!_locals.TryGetValue(a.Name, out var li)) throw new ForgeException($"assignment to undeclared '{a.Name}'", a.Line); var at0 = TypeOf(a.E); if (!Assignable(li.Type, at0)) throw new ForgeException($"assignment to '{a.Name}' type mismatch" + AwaitHint(li.Type, at0), a.Line); a.E = Coerce(a.E, li.Type); break; }
             case AsmStmt asm:
                 foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(asm.Text, @"\{\s*(\w+)\s*\}"))
                     if (!_locals.ContainsKey(m.Groups[1].Value))
@@ -1012,12 +1073,14 @@ sealed partial class CodeGen {
                 string elem = IsArray(at) ? ElemType(at) : IsPtr(at) ? Pointee(at)
                     : throw new ForgeException("indexed assignment to a non-array, non-pointer", ia.Line);
                 if (!Assignable(elem, TypeOf(ia.E))) throw new ForgeException("element type mismatch", ia.Line);
+                ia.E = Coerce(ia.E, elem);
                 break;
             }
             case DerefAssign da: {
                 var pt = TypeOf(da.Ptr);
                 if (!IsPtr(pt)) throw new ForgeException("assigning through a non-pointer", da.Line);
                 if (!Assignable(Pointee(pt), TypeOf(da.E))) throw new ForgeException("pointer target type mismatch", da.Line);
+                da.E = Coerce(da.E, Pointee(pt));
                 break;
             }
             case IfStmt i:
@@ -1035,11 +1098,11 @@ sealed partial class CodeGen {
             }
             case RetStmt r: {
                 if (_cur.Ret == "void") { if (r.E != null) throw new ForgeException($"'{_cur.Name}' returns void", r.Line); }
-                else { if (r.E == null) throw new ForgeException($"'{_cur.Name}' must return {_cur.Ret}", r.Line); var rt0 = TypeOf(r.E); if (!Assignable(_cur.Ret, rt0)) throw new ForgeException("return type mismatch" + AwaitHint(_cur.Ret, rt0), r.Line); }
+                else { if (r.E == null) throw new ForgeException($"'{_cur.Name}' must return {_cur.Ret}", r.Line); var rt0 = TypeOf(r.E); if (!Assignable(_cur.Ret, rt0)) throw new ForgeException("return type mismatch" + AwaitHint(_cur.Ret, rt0), r.Line); r.E = Coerce(r.E, _cur.Ret); }
                 break;
             }
             case ThrowStmt th: if (_cur.Throws == null) throw new ForgeException($"'{_cur.Name}' does not declare 'throws'", th.Line); if (th.Err != _cur.Throws) throw new ForgeException($"'{_cur.Name}' throws {_cur.Throws}, not {th.Err}", th.Line); break;
-            case PrintStmt p: TypeOf(p.Arg); break;
+            case PrintStmt p: if (TypeOf(p.Arg) == "double") p.Arg = DoubleText(p.Arg, null, p.Line); break;
             case ExprStmt e: TypeOf(e.E); break;
         }
     }
@@ -1530,6 +1593,9 @@ sealed partial class CodeGen {
                 if (when) { EmitJump(o.L, true, label); EmitJump(o.R, true, label); }
                 else { var skip = NewLabel("or"); EmitJump(o.L, true, skip); EmitJump(o.R, false, label); _a.Label(skip); }
                 return;
+            case Binary b when CcOf(b.Op) >= 0 && TypeOf(b.L) == "double":
+                EmitDoubleJump(b, when, label);
+                return;
             case Binary b when CcOf(b.Op) >= 0 && !(IsStr(TypeOf(b.L)) && IsStr(TypeOf(b.R))): {
                 string op = EmitCompare(b);
                 int cc = CcOf(op);
@@ -1584,6 +1650,7 @@ sealed partial class CodeGen {
     void EmitExpr(Expr e) {
         switch (e) {
             case IntLit i:  _a.MovRI(0, i.Val); break;
+            case FloatLit fl: _a.MovRI(0, BitConverter.DoubleToInt64Bits(fl.Val)); break;   // doubles live in GPRs as raw bits
             case BoolLit b: _a.MovRI(0, b.Val ? 1 : 0); break;
             case StrLit sl: {                  // value = address of null-terminated bytes
                 int off = InternString(sl.Val);
@@ -1603,7 +1670,8 @@ sealed partial class CodeGen {
             }
             case Unary u:
                 EmitExpr(u.E);
-                if (u.Op == "-") _a.NegRax();
+                if (u.Op == "-" && TypeOf(u.E) == "double") _a.Db(0x48, 0x0f, 0xba, 0xf8, 0x3f);   // btc rax, 63: flip the sign bit
+                else if (u.Op == "-") _a.NegRax();
                 else { _a.TestRaxRax(); _a.SetccRax(0x94); } // sete: !x
                 break;
             case Binary b: EmitBinary(b); break;
@@ -1664,9 +1732,18 @@ sealed partial class CodeGen {
                 EmitLoad(pt);                        // rax = *pointer (sized)
                 break;
             }
-            case CastExpr ce:
+            case CastExpr ce: {
                 EmitExpr(ce.E);                       // reinterpret: value unchanged in rax
+                string from = TypeOf(ce.E);
+                if (ce.TargetType == "double" && IsInt(from)) {
+                    _a.Db(0xf2, 0x48, 0x0f, 0x2a, 0xc0);   // cvtsi2sd xmm0, rax
+                    _a.Db(0x66, 0x48, 0x0f, 0x7e, 0xc0);   // movq rax, xmm0
+                } else if (from == "double" && IsInt(ce.TargetType)) {
+                    _a.Db(0x66, 0x48, 0x0f, 0x6e, 0xc0);   // movq xmm0, rax
+                    _a.Db(0xf2, 0x48, 0x0f, 0x2c, 0xc0);   // cvttsd2si rax, xmm0 (truncates toward zero)
+                }
                 break;
+            }
             case AwaitExpr aw:
                 EmitExpr(aw.Task);                    // rax = task record
                 _a.MovRdiRax();
@@ -1693,6 +1770,78 @@ sealed partial class CodeGen {
         }
     }
 
+    // double op double. Values are raw bits in rax; the operation itself runs in
+    // xmm0 (left) / xmm1 (right). Uses only rax, rcx and xmm0/xmm1.
+    void EmitDoubleBinary(Binary b) {
+        LoadDoubleOperands(b);
+        byte arith = b.Op switch { "+" => 0x58, "*" => 0x59, "-" => 0x5c, "/" => 0x5e, _ => 0 };
+        if (arith != 0) {
+            _a.Db(0xf2, 0x0f, arith, 0xc1);              // addsd/mulsd/subsd/divsd xmm0, xmm1
+            _a.Db(0x66, 0x48, 0x0f, 0x7e, 0xc0);        // movq rax, xmm0
+            return;
+        }
+        // Comparisons. ucomisd sets ZF=PF=CF=1 when either side is NaN, so every
+        // comparison with NaN must come out false except !=. a < b is tested as b > a,
+        // because "above" (CF=0, ZF=0) is false for NaN.
+        switch (b.Op) {
+            case ">":  _a.Db(0x66, 0x0f, 0x2e, 0xc1); _a.Db(0x0f, 0x97, 0xc0); break;   // ucomisd xmm0,xmm1; seta al
+            case ">=": _a.Db(0x66, 0x0f, 0x2e, 0xc1); _a.Db(0x0f, 0x93, 0xc0); break;   // setae al
+            case "<":  _a.Db(0x66, 0x0f, 0x2e, 0xc8); _a.Db(0x0f, 0x97, 0xc0); break;   // ucomisd xmm1,xmm0; seta al
+            case "<=": _a.Db(0x66, 0x0f, 0x2e, 0xc8); _a.Db(0x0f, 0x93, 0xc0); break;   // setae al
+            case "==":
+                _a.Db(0x66, 0x0f, 0x2e, 0xc1);
+                _a.Db(0x0f, 0x94, 0xc0); _a.Db(0x0f, 0x9b, 0xc1); _a.Db(0x20, 0xc8);   // sete al; setnp cl; and al, cl
+                break;
+            case "!=":
+                _a.Db(0x66, 0x0f, 0x2e, 0xc1);
+                _a.Db(0x0f, 0x95, 0xc0); _a.Db(0x0f, 0x9a, 0xc1); _a.Db(0x08, 0xc8);   // setne al; setp cl; or al, cl
+                break;
+            default: throw new ForgeException($"'{b.Op}' is not defined for double", b.Line);
+        }
+        _a.Db(0x0f, 0xb6, 0xc0);                        // movzx eax, al
+    }
+
+    // A double operand whose evaluation touches only rax and has no side effects:
+    // a literal, or a local that nothing can change behind our back.
+    bool DoublePlain(Expr e) => e is FloatLit || (e is VarRef v && _locals.ContainsKey(v.Name) && !_addrTaken.Contains(v.Name));
+
+    // left -> xmm0, right -> xmm1. A plain operand is loaded last, straight into its
+    // register, so no push/pop is needed (evaluation order can't be observed).
+    void LoadDoubleOperands(Binary b) {
+        if (DoublePlain(b.R)) {
+            EmitExpr(b.L); _a.Db(0x66, 0x48, 0x0f, 0x6e, 0xc0);   // movq xmm0, rax
+            EmitExpr(b.R); _a.Db(0x66, 0x48, 0x0f, 0x6e, 0xc8);   // movq xmm1, rax
+        } else if (DoublePlain(b.L)) {
+            EmitExpr(b.R); _a.Db(0x66, 0x48, 0x0f, 0x6e, 0xc8);   // movq xmm1, rax
+            EmitExpr(b.L); _a.Db(0x66, 0x48, 0x0f, 0x6e, 0xc0);   // movq xmm0, rax
+        } else {
+            EmitExpr(b.L); _a.PushRax();
+            EmitExpr(b.R); _a.Db(0x66, 0x48, 0x0f, 0x6e, 0xc8);   // movq xmm1, rax
+            _a.PopRax();   _a.Db(0x66, 0x48, 0x0f, 0x6e, 0xc0);   // movq xmm0, rax
+        }
+    }
+
+    // if/while on a double comparison: branch on the ucomisd flags directly.
+    // NaN (ZF=PF=CF=1) makes every comparison false except !=.
+    void EmitDoubleJump(Binary b, bool when, string label) {
+        LoadDoubleOperands(b);
+        string op = b.Op;
+        if (op is "<" or "<=") { op = op == "<" ? ">" : ">="; _a.Db(0x66, 0x0f, 0x2e, 0xc8); }   // ucomisd xmm1, xmm0
+        else _a.Db(0x66, 0x0f, 0x2e, 0xc1);                                                     // ucomisd xmm0, xmm1
+        switch (op) {
+            case ">":  _a.Jcc(when ? 0x7 : 0x6, label); break;    // ja / jbe
+            case ">=": _a.Jcc(when ? 0x3 : 0x2, label); break;    // jae / jb
+            case "==":
+                if (when) { string skip = NewLabel("dq"); _a.Jcc(0xa, skip); _a.Jcc(0x4, label); _a.Label(skip); }   // jp skip; je
+                else { _a.Jcc(0xa, label); _a.Jcc(0x5, label); }                                                  // jp; jne
+                break;
+            case "!=":
+                if (when) { _a.Jcc(0xa, label); _a.Jcc(0x5, label); }                                             // jp; jne
+                else { string skip = NewLabel("dn"); _a.Jcc(0xa, skip); _a.Jcc(0x4, label); _a.Label(skip); }     // jp skip; je
+                break;
+        }
+    }
+
     // ptr (rax) +/- (index * size) where index is the integer operand
     void EmitPtrArith(Expr ptr, Expr idx, int size, string op) {
         EmitExpr(ptr); _a.PushRax();
@@ -1705,6 +1854,7 @@ sealed partial class CodeGen {
 
     void EmitBinary(Binary b) {
         if (b.Op is "&&" or "||") { EmitLogical(b); return; }
+        if (TypeOf(b.L) == "double") { EmitDoubleBinary(b); return; }   // both sides are double after type checking
 
         // string operations
         var blt = TypeOf(b.L); var brt = TypeOf(b.R);
