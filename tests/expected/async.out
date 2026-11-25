@@ -1,0 +1,23 @@
+=== interleaving ===
+  task 1: step 1
+  task 2: step 1
+  task 1: step 2
+  task 2: step 2
+  task 1: step 3
+  task 2: step 3
+12
+=== recursion ===
+610
+=== Task (no result) + WhenAll ===
+hello, forge
+hello, bare metal
+=== producer / consumer ===
+  consumed 10
+  consumed 20
+  consumed 30
+  consumed 40
+100
+=== fire and forget ===
+Main is done
+background task finished (fire-and-forget)
+exit: 0

@@ -148,6 +148,20 @@ chmod +x hello
 
 ---
 
+## Running the tests
+
+```
+tests/run.sh                          # all examples, -O2 and -O0, compared with tests/expected/
+tests/run.sh hello structs            # only some examples
+FORGE_WSL=docker-desktop tests/run.sh # on Windows: also run the Linux binaries in WSL
+tests/run.sh --update hello           # accept new output as the baseline
+```
+
+Use Git Bash on Windows. `tests/manifest.txt` lists every example and whether it is run,
+only built, or expected to fail `forgec check`. CI runs the suite on Windows and Ubuntu.
+
+---
+
 ## Command reference
 
 ```

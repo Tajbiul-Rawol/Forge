@@ -1,0 +1,3 @@
+typos.fg:10: error: unknown function 'Squre' (did you mean 'Square'?)
+typos.fg: 1 error.
+exit: 1
