@@ -1,0 +1,109 @@
+module doubles;
+
+// double: 64-bit IEEE floating point. Literals, + - * /, comparisons, casts,
+// printing, and doubles in variables, arrays, pointers, structs, functions,
+// threads and async tasks. An int is converted wherever a double is expected.
+
+struct Point {
+    double x;
+    double y;
+    double Dist2() { return x * x + y * y; }
+}
+
+double Average(double[] xs) {
+    double sum = 0;
+    for (int i = 0; i < xs.length; i++) { sum += xs[i]; }
+    return sum / xs.length;
+}
+
+// Newton's method for a square root (no sqrt builtin needed)
+double Root(double v) {
+    double g = v / 2;
+    for (int i = 0; i < 30; i++) { g = (g + v / g) / 2; }
+    return g;
+}
+
+// Mandelbrot escape counts on a 200 x 100 grid: a typical floating-point loop
+long Mandelbrot() {
+    long total = 0;
+    for (int py = 0; py < 100; py++) {
+        for (int px = 0; px < 200; px++) {
+            double cx = -2.0 + px * 0.015;
+            double cy = -1.0 + py * 0.02;
+            double zx = 0;
+            double zy = 0;
+            int n = 0;
+            while (n < 100 && zx * zx + zy * zy <= 4) {
+                double t = zx * zx - zy * zy + cx;
+                zy = 2 * zx * zy + cy;
+                zx = t;
+                n++;
+            }
+            total += n;
+        }
+    }
+    return total;
+}
+
+double Scale(double v) { return v * 1.5; }
+
+async Task<double> HalfLater(double v) {
+    await Task.Yield();
+    return v / 2;
+}
+
+void Main() {
+    // literals, arithmetic, mixing with int
+    double a = 1.5;
+    double b = a * 4 + 1;
+    int whole = 7;
+    Console.WriteLine($"a={a} b={b} whole/2={whole / 2.0} third={1.0 / 3}");
+    Console.WriteLine($"0.1 + 0.2 = {0.1 + 0.2}");
+    Console.WriteLine($"-a = {-a}, a - 2 = {a - 2}");
+
+    // casts: (int) truncates toward zero, like C#
+    Console.WriteLine($"(int)2.9={(int)2.9} (int)-2.9={(int)(-2.9)} (double)7/2={(double)7 / 2}");
+
+    // comparisons (NaN compares false with everything, even itself)
+    double zero = 0;
+    double nan = zero / zero;
+    Console.WriteLine($"{a < b} {a >= 1.5} {a == 1.5} {a != 1.5} {nan == nan} {nan != nan} {nan < 1}");
+    Console.WriteLine($"{1 / zero} {-1 / zero} {nan} {-zero}");
+    // the same comparisons as branches: with NaN only != takes the branch
+    string br = "";
+    if (nan < 1) { br += "<"; }
+    if (nan >= 1) { br += ">="; }
+    if (nan == nan) { br += "=="; }
+    if (nan != nan) { br += "!="; }
+    if (!(nan > 1)) { br += "!>"; }
+    if (a <= 1.5 && b > a) { br += " ok"; }
+    int spins = 0;
+    while (nan < 1 && spins < 5) { spins++; }
+    Console.WriteLine($"branches: [{br}] loop ran {spins} times");
+
+    // formatting: 15 significant digits, or {x:Fn} for n decimals
+    double pi = 3.14159265358979323846;
+    Console.WriteLine($"pi={pi} F2={pi:F2} F0={pi:F0} big={1234567890123456789.0} small={0.00001234}");
+    Console.WriteLine(str(2.5 * 4));
+    Console.WriteLine(pi);
+
+    // arrays, pointers, structs
+    var xs = new double[4];
+    xs[0] = 1; xs[1] = 2.5; xs[2] = 4; xs[3] = -0.5;
+    Console.WriteLine($"average={Average(xs)}");
+    double cell = 10;
+    double* p = &cell;
+    *p = *p / 4;
+    *p += 0.25;
+    Console.WriteLine($"through a pointer: {cell}");
+    var pt = new Point { x = 3, y = 4 };
+    pt.x *= 2;
+    Console.WriteLine($"point ({pt.x}, {pt.y}) dist2={pt.Dist2()} dist={Root(pt.Dist2())}");
+
+    // functions, a loop, threads and async
+    Console.WriteLine($"sqrt(2) ~ {Root(2)} sqrt(2)^2 = {Root(2) * Root(2):F12}");
+    long th = spawn Mandelbrot();
+    Console.WriteLine($"Mandelbrot escape total: {join(th)}");
+    Console.WriteLine($"Scale(3) = {Scale(3)}");
+    Console.WriteLine($"async: {await HalfLater(5)}");
+}

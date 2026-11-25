@@ -107,6 +107,14 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
 
+### Session: double arithmetic (2026-11-26)
+- Doubles are raw IEEE bits in GPRs like every other value, so locals, arrays, struct fields, params, returns, threads and the register allocator are unchanged. Each operation: `LoadDoubleOperands` (left -> xmm0, right -> xmm1; a plain literal/local is loaded last, so no push/pop), one SSE instruction, `movq rax, xmm0`. Comparisons use `ucomisd` with NaN-correct flags; `EmitDoubleJump` branches on the flags directly. Unary minus flips bit 63; casts use cvtsi2sd / cvttsd2si.
+- Type checking: int operands and int values assigned to double are wrapped by `ToDouble`/`Coerce` (an IntLit becomes a FloatLit) at every assignment site: decls, assigns, element/pointer stores, args, returns, struct initializers, try-else, spawn.
+- Printing: `DoubleRuntime.cs` is Forge source injected only into programs that use double (`FirstUse`), so other programs are byte-identical. `__dtoa` = G15, `__dtoaf` = F0..F15; the 15-digit integer is computed as a double-double (Dekker exact product) and rounded half-to-even, which matches .NET exactly on 20,000 random values (G15) and 12,851 (F3/F0).
+- Kernel target: compile error (SSE not enabled at boot). extern: still rejected (`FfiType`).
+- Fixed on the way (fuzzer): a declaration whose initializer mentioned the variable itself (`var t = f(t)`) had its own error suppressed as follow-on noise, so codegen crashed (`_poisonSources`).
+- Speed: Mandelbrot 2000x1000x200 ~1.1 s vs .NET JIT ~0.3 s.
+
 ### Session: string literals in interpolation holes (2026-11-25)
 - `$"..."` is lexed by `LexInterpString`: text outside holes is unescaped, holes are kept verbatim, and a string literal inside a hole is skipped whole with `Lexer.StringEnd` (which also skips the holes of a nested `$"..."`). `ParseInterp` uses `StringEnd` too, so braces and colons inside a nested literal no longer end the hole or start a format. All 160 example binaries are byte-identical.
 
@@ -172,7 +180,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 - Interrupt handlers must not allocate while interrupting code that also allocates (the allocator isn't reentrant).
 - C callbacks must run on the main thread or a Forge thread (they need Forge's thread pointer).
 - On Linux, call `fflush(null)` before exiting if you used `printf` (Forge exits with `exit_group`).
-- No float arithmetic, classes/inheritance, generics or destructors. Struct-by-value fields and inline fixed arrays inside structs aren't supported.
+- No float (32-bit), classes/inheritance, generics or destructors. Struct-by-value fields and inline fixed arrays inside structs aren't supported. `double` isn't available on the kernel target or through `extern`; no exponent literals (`1e6`) or math library yet.
 - `async`/`await` runs on the main thread only.
 
 ---
@@ -181,7 +189,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 1. Install QEMU and boot-test `kernel_os.fg` (interrupts, keyboard, paging, shell). Fix what breaks.
 2. Commit the regression tests (see section 5).
-3. Language: `double` arithmetic, generics. (`+=`/`++`, `break`/`continue`, `switch` and runtime I/O errors are done.)
+3. Language: generics; a math library for double (sqrt, sin, ...), exponent literals, and keeping doubles in SSE registers for speed. (`+=`/`++`, `break`/`continue`, `switch`, runtime I/O errors and `double` are done.)
 4. (Done: string literals inside interpolation holes.)
 5. Bare metal: a GDT/TSS helper example, APIC timer, framebuffer output, a bootable ISO (GRUB) for real hardware.
 6. Performance: more loop optimizations (moving invariant arithmetic out of loops, strength reduction), fewer redundant moves, unrolling. JSON is still 1.4x behind C.

@@ -246,7 +246,7 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
 
 - `module name;` followed by function definitions
 - types: `int`, `uint`, `ushort`, `long`, `bool`, `string`, `void`
-  (all integers are 64-bit at the machine level)
+  (all integers are 64-bit at the machine level), and `double` (see "Floating point")
 - `var` with inferred type, typed locals, assignment
 - `if` / `else`, `while`, `return`
 - arithmetic `+ - * / %`, comparison `< > <= >= == !=`, logical `&& || !`
@@ -311,8 +311,49 @@ Rules for the new statement forms:
 
 ### Not implemented yet (future stages)
 
-`double`/float arithmetic, classes with inheritance, generics, `own`/`move` and
+`float` (32-bit), classes with inheritance, generics, `own`/`move` and
 destructors, `comptime`, `gc`. Keep `.fg` files within the subset above.
+
+## Floating point (`double`)
+
+`double` is a 64-bit IEEE-754 number, as in C#. See `examples/doubles.fg`.
+
+```csharp
+double r = 2.5;
+double area = 3.14159265358979 * r * r;
+Console.WriteLine(area);                     // 19.6349540849362
+Console.WriteLine($"{area:F2}");             // 19.63
+int whole = (int)area;                       // 19: truncates toward zero
+double half = whole / 2.0;                   // 9.5
+var xs = new double[100];                    // arrays, pointers (double*), struct fields
+```
+
+- Arithmetic `+ - * /`, comparisons `< > <= >= == !=`, unary `-`, and compound
+  assignment (`x += 0.5`). `%` and the bitwise operators are integer-only.
+- An `int` converts to `double` automatically wherever a `double` is expected:
+  `1.0 / 3`, `double d = 7;`, passing `2` to a `double` parameter. The other way
+  needs a cast: `(int)d` truncates toward zero, like C#.
+- Division by zero gives `Infinity`, `-Infinity` or `NaN` (no crash). `NaN`
+  compares false with everything, itself included, except with `!=`.
+- Printing (`Console.WriteLine(d)`, `str(d)`, `$"{d}"`) shows 15 significant
+  digits, like C#'s `ToString("G15")`: `0.1 + 0.2` prints `0.3`, large and small
+  values use `E` notation (`1E+21`, `1.234E-06`). `$"{d:F2}"` gives exactly two
+  decimals (`F0` to `F15`). Exact halves round to even, as .NET does. The output was
+  checked digit for digit against .NET on 20,000 random values of every magnitude.
+- Doubles work in locals, parameters, return values, arrays, pointers, struct
+  fields, threads (`spawn`) and async tasks.
+
+Limits:
+
+- Not on `--target kernel` yet (bare metal doesn't enable SSE), and not as `extern`
+  (C library) parameters or return values.
+- Literals are written with a decimal point (`1.5`, `1000000.0`); exponent
+  literals like `1e6` aren't supported yet.
+- No math library yet (`sqrt`, `sin`, ...). You can write them in Forge
+  (`examples/doubles.fg` has a Newton-method square root).
+- Speed: each operation moves its operands through SSE registers and back, so
+  float-heavy loops currently run about 3-4x slower than .NET's JIT (a Mandelbrot
+  loop: ~1.1 s vs ~0.3 s). Keeping doubles in SSE registers is planned.
 
 ## Structs
 
@@ -626,7 +667,7 @@ targets**. On Linux they use raw syscalls; on Windows they use ws2_32.dll
 (Winsock) and kernel32 (CreateFileA/ReadFile/WriteFile). So the HTTP server and
 Redis client run as native Windows .exe files -- no WSL required.
 
-Still absent: floating point, structs/classes, and a broad standard library.
+Still absent: classes with inheritance, and a broad standard library (math, collections).
 
 ## Freestanding kernel target
 

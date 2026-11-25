@@ -21,6 +21,7 @@
     <Compile Include="Threads.cs" />
     <Compile Include="InlineAsm.cs" />
     <Compile Include="AsyncRuntime.cs" />
+    <Compile Include="DoubleRuntime.cs" />
     <Compile Include="Pe.cs" />
     <Compile Include="Elf32.cs" />
     <Compile Include="Driver.cs" />

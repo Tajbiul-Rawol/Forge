@@ -1,0 +1,4 @@
+self_reference.fg:7: error: use of undeclared variable 'Console'
+self_reference.fg:8: error: use of undeclared variable 'missing'
+self_reference.fg: 2 errors.
+exit: 1
