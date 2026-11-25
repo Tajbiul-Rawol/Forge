@@ -1,0 +1,10 @@
+// The same case value twice.
+module m;
+
+int F() { return 1; }
+
+void Main() {
+    int x = 1;
+    int[] a = new int[4];
+    switch (x) { case 1: break; case 2: break; case 1: break; }
+}

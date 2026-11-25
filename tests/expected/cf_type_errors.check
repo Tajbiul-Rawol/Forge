@@ -1,0 +1,8 @@
+cf_type_errors.fg:8: error: '++' can only be used as a whole statement (x++;) or as a for-loop step, not inside an expression
+cf_type_errors.fg:9: error: '--' can only be used as a whole statement (x--;) or as a for-loop step, not inside an expression
+cf_type_errors.fg:10: error: '-' needs integers
+cf_type_errors.fg:11: error: assignment to undeclared 'missing'
+cf_type_errors.fg:12: error: assignment to undeclared 'missing2'
+cf_type_errors.fg:13: error: cannot compare int with string
+cf_type_errors.fg: 6 errors.
+exit: 1

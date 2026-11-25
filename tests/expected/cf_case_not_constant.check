@@ -1,0 +1,3 @@
+cf_case_not_constant.fg:9: error: a case label must be a constant: a number, a string, true or false
+cf_case_not_constant.fg: 1 error.
+exit: 1

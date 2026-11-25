@@ -1,0 +1,10 @@
+// Only one default per switch.
+module m;
+
+int F() { return 1; }
+
+void Main() {
+    int x = 1;
+    int[] a = new int[4];
+    switch (x) { default: break; case 1: break; default: break; }
+}

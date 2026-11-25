@@ -1,0 +1,14 @@
+// Type errors in the new forms are reported like any other (all of them, by line).
+module m;
+
+void Main() {
+    int x = 1;
+    int[] a = new int[4];
+    string s = "abc";
+    a[x++] = 3;
+    int y = x-- + 1;
+    s -= 1;
+    missing += 2;
+    missing2++;
+    switch (x) { case "one": break; }
+}

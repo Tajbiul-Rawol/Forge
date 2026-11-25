@@ -1,0 +1,10 @@
+// 'case' outside a switch.
+module m;
+
+int F() { return 1; }
+
+void Main() {
+    int x = 1;
+    int[] a = new int[4];
+    case 1: x = 2;
+}
