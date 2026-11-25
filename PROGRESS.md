@@ -98,6 +98,15 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - interpolation holes weren't type-checked by `check`, reported line 1, and silently ignored extra tokens (`{a b}`).
 - C# warnings are now errors (`TreatWarningsAsErrors`).
 
+### Session: everyday syntax (2026-11-25)
+- Compound assignment, `++`/`--`, `break`/`continue` and `switch`, all lowered in the parser (`Frontend.cs`) so codegen, the optimizer and the register allocator are unchanged:
+  - `x op= e` becomes `x = x op e`. The target is copied by `ClonePure`, which rejects calls (the target is evaluated twice).
+  - `x++` is an `IncDecExpr`, turned into an assignment when it is a whole statement or a for step; elsewhere `TypeOf` reports it.
+  - `break`/`continue` become `GotoStmt` to `brk$N`/`cont$N` labels (global asm labels; `$` keeps them apart from user names). The continue label ends the body, so a for step still runs. A trailing `continue`/`break` is dropped.
+  - `switch` becomes `VarDecl sw$N = subject` (skipped for a plain variable) plus an if/else-if chain; default is the final else. Constant labels only, duplicates and fall-through are errors (C# rules).
+  - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
+- All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
+
 ---
 
 ## 3. Examples added in these sessions
@@ -159,7 +168,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 1. Install QEMU and boot-test `kernel_os.fg` (interrupts, keyboard, paging, shell). Fix what breaks.
 2. Commit the regression tests (see section 5).
-3. Language: `+=`/`++`, `break`/`continue`, a `switch`, `double` arithmetic, generics.
+3. Language: `double` arithmetic, generics. (`+=`/`++`, `break`/`continue` and `switch` are done.)
 4. Allow string literals inside interpolation holes.
 5. Bare metal: a GDT/TSS helper example, APIC timer, framebuffer output, a bootable ISO (GRUB) for real hardware.
 6. Performance: more loop optimizations (moving invariant arithmetic out of loops, strength reduction), fewer redundant moves, unrolling. JSON is still 1.4x behind C.

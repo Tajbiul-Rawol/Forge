@@ -1,0 +1,10 @@
+// Compound assignment needs something assignable on the left.
+module m;
+
+int F() { return 1; }
+
+void Main() {
+    int x = 1;
+    int[] a = new int[4];
+    F() += 1;
+}

@@ -1,0 +1,192 @@
+module control_flow;
+
+// Compound assignment (+= -= ...), ++ / --, break, continue and switch.
+// Every check prints its value and "ok", or "WRONG" if it differs from the
+// expected result worked out with plain assignments.
+
+struct Counter {
+    int hits;
+    int misses;
+    void Hit() { hits++; }
+    void Miss(int n) { misses += n; }
+}
+
+void Check(string what, long got, long want) {
+    if (got == want) { Console.WriteLine($"{what} = {got} ok"); }
+    else { Console.WriteLine($"{what} = {got} WRONG, expected {want}"); }
+}
+
+// ---- break/continue in a small function that gets called (and inlined) often
+int FirstMultiple(int start, int k) {
+    int i = start;
+    while (true) {
+        if (i % k == 0) { break; }
+        i++;
+    }
+    return i;
+}
+
+int SumSkipping(int n, int skip) {
+    int s = 0;
+    for (int i = 1; i <= n; i++) {
+        if (i % skip == 0) { continue; }
+        s += i;
+    }
+    return s;
+}
+
+// ---- switch with return in every section (all paths return)
+string Name(int d) {
+    switch (d) {
+        case 0: return "zero";
+        case 1: case 2: case 3: return "small";
+        case -1: return "minus one";
+        default: return "big";
+    }
+}
+
+// ---- switch on a string
+int Score(string grade) {
+    switch (grade) {
+        case "A": return 4;
+        case "B": return 3;
+        case "C": return 2;
+    }
+    return 0;
+}
+
+// ---- the switch subject is evaluated exactly once
+int Next(int* calls) { *calls += 1; return *calls; }
+
+// ---- tail recursion (the optimizer turns it into a loop with its own label)
+int CountDown(int n, int acc) {
+    switch (n) {
+        case 0: return acc;
+    }
+    while (true) { acc += 2; break; }
+    return CountDown(n - 1, acc);
+}
+
+// ---- break/continue inside an async function (runs on its own stack)
+async Task<int> SumOdd(int n) {
+    int s = 0;
+    for (int i = 0; ; i++) {
+        if (i > n) { break; }
+        if (i % 2 == 0) { continue; }
+        s += i;
+        await Task.Yield();
+    }
+    return s;
+}
+
+void Main() {
+    // compound assignment on a local, every operator
+    long x = 100;
+    x += 5;  Check("x += 5", x, 105);
+    x -= 15; Check("x -= 15", x, 90);
+    x *= 3;  Check("x *= 3", x, 270);
+    x /= 4;  Check("x /= 4", x, 67);
+    x %= 10; Check("x %= 10", x, 7);
+    x <<= 4; Check("x <<= 4", x, 112);
+    x >>= 2; Check("x >>= 2", x, 28);
+    x &= 12; Check("x &= 12", x, 12);
+    x |= 3;  Check("x |= 3", x, 15);
+    x ^= 5;  Check("x ^= 5", x, 10);
+
+    // ++ and --, both forms, as statements and as for steps
+    int n = 0;
+    n++; n++; ++n; n--; --n;
+    Check("n after ++ ++ ++ -- --", n, 1);
+    int down = 0;
+    for (int i = 10; i > 0; i--) { down += i; }
+    Check("for i-- sum", down, 55);
+    int stepped = 0;
+    for (int i = 0; i < 20; i += 5) { stepped++; }
+    Check("for i += 5 count", stepped, 4);
+
+    // on array elements, through pointers, and on struct fields
+    var a = new int[5];
+    for (int i = 0; i < 5; i++) { a[i] = i * 10; }
+    a[2] += 7; a[4]++; a[0]--;
+    int j = 1;
+    a[j + 2] *= 2;
+    Check("a[2] += 7", a[2], 27);
+    Check("a[4]++", a[4], 41);
+    Check("a[0]--", a[0], -1);
+    Check("a[j+2] *= 2", a[3], 60);
+    int cell = 5;
+    int* p = &cell;
+    *p += 10; *p -= 1;
+    Check("*p += 10; *p -= 1", cell, 14);
+    var c = new Counter { hits = 0, misses = 0 };
+    c.Hit(); c.Hit(); c.Miss(3); c.misses++; c.hits *= 10;
+    Check("struct hits", c.hits, 20);
+    Check("struct misses", c.misses, 4);
+    string s = "for";
+    s += "ge";
+    Console.WriteLine(s);
+
+    // break and continue
+    int w = 0;
+    while (true) { w++; if (w == 7) { break; } }
+    Check("while(true) break", w, 7);
+    Check("FirstMultiple(10, 7)", FirstMultiple(10, 7), 14);
+    Check("FirstMultiple(21, 7)", FirstMultiple(21, 7), 21);
+    Check("SumSkipping(10, 3)", SumSkipping(10, 3), 37);
+    int found = -1;
+    for (int r = 0; r < 10; r++) {
+        for (int q = 0; q < 10; q++) {
+            if (q == 3) { break; }          // leaves only the inner loop
+            if (r * q == 12) { found = r * 100 + q; }
+        }
+        if (found >= 0) { break; }
+    }
+    Check("nested break", found, 602);
+    int odd = 0;
+    int k = 0;
+    while (k < 10) {
+        k++;
+        if (k % 2 == 0) { continue; }
+        odd += k;
+    }
+    Check("while continue", odd, 25);
+
+    // switch
+    Console.WriteLine(Name(0));
+    Console.WriteLine(Name(2));
+    Console.WriteLine(Name(-1));
+    Console.WriteLine(Name(99));
+    Check("Score(\"B\")", Score("B"), 3);
+    Check("Score(\"F\")", Score("F"), 0);
+    int calls = 0;
+    int picked = 0;
+    switch (Next(&calls) + 10) {
+        case 10: picked = 1; break;
+        case 11: picked = 2; break;
+        case 12: picked = 3; break;
+    }
+    Check("switch on call", picked, 2);
+    Check("subject evaluated once", calls, 1);
+    int tally = 0;
+    for (int i = 0; i < 6; i++) {
+        switch (i) {
+            case 0: continue;               // continue the loop, not the switch
+            case 1:
+                if (tally == 0) { tally += 100; break; }   // break leaves the switch only
+                tally += 1000;
+                break;
+            default: tally += i; break;
+        }
+        tally++;
+    }
+    Check("switch in loop", tally, 119);
+    int only = 0;
+    switch (only) { default: only = 9; break; }
+    Check("default-only switch", only, 9);
+    switch (only) { }
+
+    // interplay with the optimizer and async
+    Check("CountDown(5, 0)", CountDown(5, 0), 10);
+    var t = SumOdd(9);
+    Check("async break/continue", await t, 25);
+}

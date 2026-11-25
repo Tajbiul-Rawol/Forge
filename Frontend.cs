@@ -37,9 +37,12 @@ sealed class Lexer {
         "module","void","int","uint","ushort","long","double","bool","string",
         "i8","u8","i16","u16","i32","u32","i64","u64",
         "var","if","else","while","for","return","true","false","throws","throw","new","try","spawn",
-        "async","await","struct","packed","null","extern"
+        "async","await","struct","packed","null","extern",
+        "break","continue","switch","case","default"
     };
-    static readonly string[] TwoChar = { "<<", ">>", "<=", ">=", "==", "!=", "&&", "||" };
+    static readonly string[] ThreeChar = { "<<=", ">>=" };
+    static readonly string[] TwoChar = { "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
+        "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=" };
 
     readonly string _s; int _i; int _line = 1;
     public Lexer(string s, int firstLine = 1) { _s = s; _line = firstLine; }
@@ -59,12 +62,17 @@ sealed class Lexer {
             if (char.IsDigit(c)) { toks.Add(LexNumber()); continue; }
             if (char.IsLetter(c) || c == '_') { toks.Add(LexWord()); continue; }
             bool matched = false;
+            foreach (var tc in ThreeChar)
+                if (_i + 2 < _s.Length && string.CompareOrdinal(_s, _i, tc, 0, 3) == 0) {
+                    toks.Add(new Tok(TokKind.Op, tc, _line)); _i += 3; matched = true; break;
+                }
+            if (matched) continue;
             foreach (var tc in TwoChar)
                 if (c == tc[0] && Nxt == tc[1]) {
                     toks.Add(new Tok(TokKind.Op, tc, _line)); _i += 2; matched = true; break;
                 }
             if (matched) continue;
-            if ("+-*/%<>=!(){};,.[]&|^".IndexOf(c) >= 0) {
+            if ("+-*/%<>=!(){};,.[]&|^:".IndexOf(c) >= 0) {
                 toks.Add(new Tok(TokKind.Op, c.ToString(), _line)); _i++; continue;
             }
             throw new ForgeException($"unexpected character '{c}'", _line);
@@ -174,6 +182,9 @@ sealed class PrintStmt:Stmt { public Expr Arg = null!; } // Console.WriteLine
 sealed class LabelStmt:Stmt { public string Name = ""; }
 sealed class GotoStmt:Stmt { public string Name = ""; }
 sealed class InlineRet:Stmt { public Expr? E; public string End = ""; }
+// x++ / x-- / ++x / --x. Only valid as a whole statement (or a for step), where the parser
+// rewrites it to an assignment; anywhere else the type checker reports it.
+sealed class IncDecExpr: Expr { public Expr Target = null!; public string Op = ""; }
 
 sealed class Func : Node {
     public string Ret = "";
@@ -381,14 +392,221 @@ sealed class Parser {
     List<Stmt> ParseBlock() {
         Expect(TokKind.Op, "{");
         var list = new List<Stmt>();
-        while (!AtOp("}")) list.Add(ParseStmt());
+        while (!AtOp("}")) {
+            if (Cur.Kind == TokKind.Eof) throw new ForgeException("missing '}' at end of file", Cur.Line);
+            ParseStmtInto(list);
+        }
         Expect(TokKind.Op, "}");
         return list;
     }
 
     List<Stmt> StmtAsList() {
         if (AtOp("{")) return ParseBlock();
-        return new List<Stmt> { ParseStmt() };
+        var list = new List<Stmt>();
+        ParseStmtInto(list);
+        return list;
+    }
+
+    // ---- loops, switch, break/continue -------------------------------------------
+    // These are lowered here to constructs the rest of the compiler already handles:
+    //   break / continue  -> goto a label generated for the enclosing loop or switch
+    //   switch            -> (a temp holding the subject) + an if / else if chain
+    // Labels are global assembler labels; '$' can't appear in user identifiers, so
+    // the generated names never collide with anything else.
+    sealed class JumpTarget {
+        public string Break = "", Continue = "";
+        public bool IsSwitch;
+        public int BreakUses, ContinueUses;
+    }
+    readonly List<JumpTarget> _jumps = new();
+    static int _labelSeq;
+
+    // Parse one statement; loops and switch may expand to several statements.
+    void ParseStmtInto(List<Stmt> list) {
+        if (AtKw("while") || AtKw("for")) ParseLoop(list);
+        else if (AtKw("switch")) ParseSwitch(list);
+        else list.Add(ParseStmt());
+    }
+
+    void ParseLoop(List<Stmt> list) {
+        int line = Cur.Line, id = ++_labelSeq;
+        var jt = new JumpTarget { Break = $"brk${id}", Continue = $"cont${id}" };
+        List<Stmt> body;
+        Stmt loop;
+        if (Accept(TokKind.Kw, "while")) {
+            Expect(TokKind.Op, "("); var c = ParseExpr(); Expect(TokKind.Op, ")");
+            _jumps.Add(jt); body = StmtAsList(); _jumps.RemoveAt(_jumps.Count - 1);
+            loop = new WhileStmt { Line = line, Cond = c, Body = body };
+        } else {
+            Expect(TokKind.Kw, "for"); Expect(TokKind.Op, "(");
+            // init: a declaration or assignment, terminated by ';'
+            Stmt? init = AtOp(";") ? null : ParseSimpleStmt();
+            Expect(TokKind.Op, ";");
+            Expr? cond = AtOp(";") ? null : ParseExpr();
+            Expect(TokKind.Op, ";");
+            Stmt? step = AtOp(")") ? null : ParseSimpleStmt();
+            Expect(TokKind.Op, ")");
+            _jumps.Add(jt); body = StmtAsList(); _jumps.RemoveAt(_jumps.Count - 1);
+            loop = new ForStmt { Line = line, Init = init, Cond = cond, Step = step, Body = body };
+        }
+        // a trailing 'continue;' jumps to where the body ends anyway
+        if (body.Count > 0 && body[^1] is GotoStmt g && g.Name == jt.Continue) { body.RemoveAt(body.Count - 1); jt.ContinueUses--; }
+        // continue: end of the body, so a for loop's step still runs
+        if (jt.ContinueUses > 0) body.Add(new LabelStmt { Line = line, Name = jt.Continue });
+        list.Add(loop);
+        if (jt.BreakUses > 0) list.Add(new LabelStmt { Line = line, Name = jt.Break });
+    }
+
+    Stmt ParseBreakContinue() {
+        var kw = Eat();
+        Expect(TokKind.Op, ";");
+        if (kw.Text == "break") {
+            if (_jumps.Count == 0) throw new ForgeException("'break' is only allowed inside a loop or a switch", kw.Line);
+            var t = _jumps[^1]; t.BreakUses++;
+            return new GotoStmt { Line = kw.Line, Name = t.Break };
+        }
+        for (int k = _jumps.Count - 1; k >= 0; k--)
+            if (!_jumps[k].IsSwitch) { _jumps[k].ContinueUses++; return new GotoStmt { Line = kw.Line, Name = _jumps[k].Continue }; }
+        throw new ForgeException("'continue' is only allowed inside a loop", kw.Line);
+    }
+
+    void ParseSwitch(List<Stmt> list) {
+        int line = Eat().Line, id = ++_labelSeq;
+        Expect(TokKind.Op, "("); var subject = ParseExpr(); Expect(TokKind.Op, ")");
+        Expect(TokKind.Op, "{");
+        // The subject is evaluated once. A plain variable is compared directly: once a
+        // section runs, no further comparisons happen, so it may assign the variable.
+        string subj;
+        if (subject is VarRef sv) subj = sv.Name;
+        else { subj = $"sw${id}"; list.Add(new VarDecl { Line = line, Name = subj, E = subject }); }
+
+        var jt = new JumpTarget { Break = $"brk${id}", IsSwitch = true };
+        var sections = new List<(List<Expr> Labels, bool IsDefault, List<Stmt> Body, int Line)>();
+        var seen = new HashSet<string>();
+        bool hasDefault = false;
+        _jumps.Add(jt);
+        while (!AtOp("}")) {
+            if (!AtKw("case") && !AtKw("default"))
+                throw new ForgeException($"expected 'case' or 'default' in switch but found '{Cur.Text}'", Cur.Line);
+            int sline = Cur.Line;
+            var labels = new List<Expr>();
+            bool isDefault = false;
+            while (AtKw("case") || AtKw("default")) {
+                var kw = Eat();
+                if (kw.Text == "default") {
+                    if (hasDefault) throw new ForgeException("a switch can have only one 'default'", kw.Line);
+                    hasDefault = isDefault = true;
+                } else {
+                    var v = ParseExpr();
+                    var key = CaseKey(v) ?? throw new ForgeException("a case label must be a constant: a number, a string, true or false", kw.Line);
+                    if (!seen.Add(key)) throw new ForgeException($"duplicate case label {key[(key.IndexOf(':') + 1)..]}", kw.Line);
+                    labels.Add(v);
+                }
+                Expect(TokKind.Op, ":");
+            }
+            var body = new List<Stmt>();
+            while (!AtKw("case") && !AtKw("default") && !AtOp("}")) {
+                if (Cur.Kind == TokKind.Eof) throw new ForgeException("missing '}' at end of switch", line);
+                ParseStmtInto(body);
+            }
+            if (!EndsSection(body))
+                throw new ForgeException("switch section falls through to the next one: end it with 'break', 'return', 'continue' or 'throw'", sline);
+            // a trailing 'break;' just leaves the if-chain, which happens anyway
+            if (body[^1] is GotoStmt g && g.Name == jt.Break) { body.RemoveAt(body.Count - 1); jt.BreakUses--; }
+            sections.Add((labels, isDefault, body, sline));
+        }
+        Expect(TokKind.Op, "}");
+        _jumps.RemoveAt(_jumps.Count - 1);
+
+        // Build the chain from the bottom up; the default section (wherever it was
+        // written) becomes the final else.
+        List<Stmt>? chain = null;
+        foreach (var s in sections) if (s.IsDefault) chain = s.Body;
+        for (int k = sections.Count - 1; k >= 0; k--) {
+            var s = sections[k];
+            if (s.IsDefault) continue;
+            Expr? cond = null;
+            foreach (var lab in s.Labels) {
+                Expr eq = new Binary { Line = lab.Line, Op = "==", L = new VarRef { Line = lab.Line, Name = subj }, R = lab };
+                cond = cond == null ? eq : new Binary { Line = lab.Line, Op = "||", L = cond, R = eq };
+            }
+            chain = new List<Stmt> { new IfStmt { Line = s.Line, Cond = cond!, Then = s.Body, Else = chain } };
+        }
+        if (chain != null) list.AddRange(chain);
+        if (jt.BreakUses > 0) list.Add(new LabelStmt { Line = line, Name = jt.Break });
+    }
+
+    // "kind:value" for a constant case label (used to find duplicates), or null.
+    static string? CaseKey(Expr e) => e switch {
+        IntLit i => "int:" + i.Val,
+        Unary { Op: "-", E: IntLit i } => "int:" + (-i.Val),
+        StrLit s => "string:\"" + s.Val + "\"",
+        BoolLit b => "bool:" + (b.Val ? "true" : "false"),
+        _ => null,
+    };
+
+    // Does control leave at the end of this statement list (no fall-through)?
+    static bool EndsSection(List<Stmt> body) => body.Count > 0 && body[^1] switch {
+        GotoStmt or RetStmt or ThrowStmt => true,
+        IfStmt i => i.Else != null && EndsSection(i.Then) && EndsSection(i.Else),
+        _ => false,
+    };
+
+    // ---- assignment forms: = , op= , ++ , -- ---------------------------------------
+    static readonly Dictionary<string, string> CompoundOps = new() {
+        ["+="] = "+", ["-="] = "-", ["*="] = "*", ["/="] = "/", ["%="] = "%",
+        ["&="] = "&", ["|="] = "|", ["^="] = "^", ["<<="] = "<<", [">>="] = ">>",
+    };
+
+    // After the expression that starts a statement: '= e', 'op= e', a whole-statement
+    // x++ / ++x, or nothing (an expression statement).  x op= e  becomes  x = x op e.
+    Stmt FinishSimpleStmt(Expr lhs, int line) {
+        if (lhs is IncDecExpr inc) {
+            var one = new IntLit { Line = line, Val = 1 };
+            return MakeAssign(inc.Target, new Binary { Line = line, Op = inc.Op == "++" ? "+" : "-", L = TargetCopy(inc.Target, inc.Op, line), R = one }, line, inc.Op);
+        }
+        if (AtOp("=")) { Eat(); return MakeAssign(lhs, ParseExpr(), line, "="); }
+        if (Cur.Kind == TokKind.Op && CompoundOps.TryGetValue(Cur.Text, out var op)) {
+            string opText = Eat().Text;
+            var copy = TargetCopy(lhs, opText, line);
+            return MakeAssign(lhs, new Binary { Line = line, Op = op, L = copy, R = ParseExpr() }, line, opText);
+        }
+        return new ExprStmt { Line = line, E = lhs };
+    }
+
+    static Stmt MakeAssign(Expr lhs, Expr rhs, int line, string op) {
+        if (lhs is VarRef vr) return new Assign { Line = line, Name = vr.Name, E = rhs };
+        if (lhs is IndexExpr ix) return new IndexAssign { Line = line, Arr = ix.Arr, Index = ix.Index, E = rhs };
+        if (lhs is Deref dr) return new DerefAssign { Line = line, Ptr = dr.Ptr, E = rhs };
+        if (lhs is MemberExpr me) return new MemberAssign { Line = line, Obj = me.Obj, Name = me.Name, E = rhs };
+        throw new ForgeException($"left side of '{op}' is not assignable", line);
+    }
+
+    // The target read back for x op= e / x++. It is evaluated twice, so it must have
+    // no side effects: a call inside an index or pointer is rejected.
+    static Expr TargetCopy(Expr lhs, string op, int line) {
+        if (lhs is not (VarRef or IndexExpr or Deref or MemberExpr))
+            throw new ForgeException($"left side of '{op}' is not assignable", line);
+        return ClonePure(lhs) ?? throw new ForgeException(
+            $"'{op}' on an element whose index or address contains a call is not supported: store that value in a variable first", line);
+    }
+
+    static Expr? ClonePure(Expr e) {
+        Expr? r = e switch {
+            IntLit i => new IntLit { Val = i.Val },
+            BoolLit b => new BoolLit { Val = b.Val },
+            NullLit => new NullLit(),
+            VarRef v => new VarRef { Name = v.Name },
+            Unary u => ClonePure(u.E) is { } ue ? new Unary { Op = u.Op, E = ue } : null,
+            Binary b => ClonePure(b.L) is { } l && ClonePure(b.R) is { } rr ? new Binary { Op = b.Op, L = l, R = rr } : null,
+            IndexExpr ix => ClonePure(ix.Arr) is { } a && ClonePure(ix.Index) is { } x ? new IndexExpr { Arr = a, Index = x } : null,
+            MemberExpr me => ClonePure(me.Obj) is { } o ? new MemberExpr { Obj = o, Name = me.Name } : null,
+            Deref d => ClonePure(d.Ptr) is { } p ? new Deref { Ptr = p } : null,
+            CastExpr c => ClonePure(c.E) is { } ce ? new CastExpr { TargetType = c.TargetType, E = ce } : null,
+            _ => null,
+        };
+        if (r != null) r.Line = e.Line;
+        return r;
     }
 
     // A declaration or assignment with NO trailing ';' (used in for(...) headers).
@@ -402,16 +620,7 @@ sealed class Parser {
             string ct = ParseType(); string name = ExpectId().Text; Expect(TokKind.Op, "=");
             return new VarDecl { Line = line, DeclType = ct, Name = name, E = ParseExpr() };
         }
-        var lhs = ParseExpr();
-        if (AtOp("=")) {
-            Eat(); var rhs = ParseExpr();
-            if (lhs is VarRef vr) return new Assign { Line = line, Name = vr.Name, E = rhs };
-            if (lhs is IndexExpr ix) return new IndexAssign { Line = line, Arr = ix.Arr, Index = ix.Index, E = rhs };
-            if (lhs is Deref dr) return new DerefAssign { Line = line, Ptr = dr.Ptr, E = rhs };
-            if (lhs is MemberExpr me) return new MemberAssign { Line = line, Obj = me.Obj, Name = me.Name, E = rhs };
-            throw new ForgeException("left side of '=' is not assignable", line);
-        }
-        return new ExprStmt { Line = line, E = lhs };
+        return FinishSimpleStmt(ParseExpr(), line);
     }
 
     static Expr DefaultValue(string type, int line) => type switch {
@@ -441,21 +650,9 @@ sealed class Parser {
             if (Accept(TokKind.Kw, "else")) els = StmtAsList();
             return new IfStmt { Line = line, Cond = c, Then = then, Else = els };
         }
-        if (AtKw("while")) {
-            Eat(); Expect(TokKind.Op, "("); var c = ParseExpr(); Expect(TokKind.Op, ")");
-            return new WhileStmt { Line = line, Cond = c, Body = StmtAsList() };
-        }
-        if (AtKw("for")) {
-            Eat(); Expect(TokKind.Op, "(");
-            // init: a declaration or assignment, terminated by ';'
-            Stmt? init = AtOp(";") ? null : ParseSimpleStmt();
-            Expect(TokKind.Op, ";");
-            Expr? cond = AtOp(";") ? null : ParseExpr();
-            Expect(TokKind.Op, ";");
-            Stmt? step = AtOp(")") ? null : ParseSimpleStmt();
-            Expect(TokKind.Op, ")");
-            return new ForStmt { Line = line, Init = init, Cond = cond, Step = step, Body = StmtAsList() };
-        }
+        if (AtKw("break") || AtKw("continue")) return ParseBreakContinue();
+        if (AtKw("case") || AtKw("default"))
+            throw new ForgeException($"'{Cur.Text}' is only allowed inside a switch", line);
         if (AtKw("return")) {
             Eat(); Expr? e = null;
             if (!AtOp(";")) e = ParseExpr();
@@ -490,19 +687,10 @@ sealed class Parser {
             if (hint != null)
                 throw new ForgeException($"unknown type '{maybeType}' (did you mean '{hint}'?)", Cur.Line);
         }
-        // expression, possibly an assignment (lvalue = rvalue)
-        var lhs = ParseExpr();
-        if (AtOp("=")) {
-            Eat();
-            var rhs = ParseExpr(); Expect(TokKind.Op, ";");
-            if (lhs is VarRef vr) return new Assign { Line = line, Name = vr.Name, E = rhs };
-            if (lhs is IndexExpr ix) return new IndexAssign { Line = line, Arr = ix.Arr, Index = ix.Index, E = rhs };
-            if (lhs is Deref dr) return new DerefAssign { Line = line, Ptr = dr.Ptr, E = rhs };
-            if (lhs is MemberExpr me) return new MemberAssign { Line = line, Obj = me.Obj, Name = me.Name, E = rhs };
-            throw new ForgeException("left side of '=' is not assignable", line);
-        }
+        // expression, possibly an assignment (x = e, x += e, x++, ...)
+        var st = FinishSimpleStmt(ParseExpr(), line);
         Expect(TokKind.Op, ";");
-        return new ExprStmt { Line = line, E = lhs };
+        return st;
     }
 
     Expr ParseExpr() => ParseOr();
@@ -518,6 +706,10 @@ sealed class Parser {
     Expr ParseMul() { var e = ParseUnary(); while (AtOp("*")||AtOp("/")||AtOp("%")) { var o = Eat(); e = new Binary { Line = o.Line, Op = o.Text, L = e, R = ParseUnary() }; } return e; }
 
     Expr ParseUnary() {
+        if (AtOp("++") || AtOp("--")) {
+            var o = Eat();
+            return new IncDecExpr { Line = o.Line, Target = ParseUnary(), Op = o.Text };
+        }
         if (AtKw("await")) {
             int line = Eat().Line;
             // await Task.Yield()   /   await Task.WhenAll(t1, t2, ...)
@@ -655,6 +847,9 @@ sealed class Parser {
                 // obj.field  (or arr.length: the type checker decides)
                 int line = Cur.Line; Eat();
                 e = new MemberExpr { Line = line, Obj = e, Name = Eat().Text };
+            } else if (AtOp("++") || AtOp("--")) {
+                var o = Eat();
+                return new IncDecExpr { Line = o.Line, Target = e, Op = o.Text };
             } else break;
         }
         return e;

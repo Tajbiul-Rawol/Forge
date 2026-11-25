@@ -256,6 +256,19 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
 - arrays: `int[] a = new int[n];`, element read/write `a[i]` / `a[i] = v`,
   and `a.length` (heap-backed, so the language is Turing complete)
 - `for (init; cond; step)` loops (alongside `while`)
+- compound assignment `+= -= *= /= %= &= |= ^= <<= >>=` on variables, array
+  elements, `*p` and struct fields; `x++` / `x--` / `++x` / `--x` as statements
+  and as `for` steps (`for (int i = 0; i < n; i++)`)
+- `break` and `continue` in `while` and `for` loops
+- `switch` on an integer, string or bool, C#-style (see `examples/control_flow.fg`):
+
+  ```csharp
+  switch (code) {
+      case 200: case 204: ok++; break;
+      case 404: Console.WriteLine("not found"); break;
+      default: return -1;
+  }
+  ```
 - sized integer types `i8 u8 i16 u16 i32 u32 i64 u64` (memory-access widths)
 - pointers `T*`, address-of `&x`, dereference `*p` and `*p = v`, pointer
   indexing `p[i]`, pointer arithmetic `p + i` (scaled by element size)
@@ -279,6 +292,21 @@ features.fg:3: error: 'D' can throw - call it with 'try'
 - `$"..."` interpolated strings anywhere a string is expected
 - `extern` functions from DLLs / shared libraries, and C-callable Forge functions
 - bare-metal builtins, `interrupt` handlers and `asm("...")` (see below)
+
+Rules for the new statement forms:
+
+- `x++` and `x--` change a variable, so they are whole statements: `a[i++]` or
+  `y = x++` is an error. Write `a[i] = v; i++;`.
+- `a[f()] += 1` is rejected, because the target is read and then written: put
+  `f()` in a variable first. Targets without calls (`a[i + 1] += 2`, `p.count++`)
+  are fine.
+- A `switch` evaluates its subject once. Case labels are constants (numbers, strings,
+  `true`/`false`); duplicates are an error. As in C#, a section can't fall through
+  into the next one: end it with `break`, `return`, `continue` or `throw`. Several
+  labels can share one section, and `default` can appear anywhere.
+- `continue` inside a `switch` continues the enclosing loop; `break` leaves the switch.
+- Functions that use `break` or `continue` are not inlined by the optimizer (they
+  still compile to tight loops).
 
 ### Not implemented yet (future stages)
 

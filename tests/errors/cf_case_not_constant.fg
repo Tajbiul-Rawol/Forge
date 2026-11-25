@@ -1,0 +1,10 @@
+// Case labels must be constants.
+module m;
+
+int F() { return 1; }
+
+void Main() {
+    int x = 1;
+    int[] a = new int[4];
+    switch (x) { case x: break; }
+}

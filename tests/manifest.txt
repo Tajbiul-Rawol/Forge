@@ -29,6 +29,7 @@ threads_test    win,linux   run
 turing          win,linux   run
 uart            win,linux   run
 ffi             win         run
+control_flow    win,linux   run
 
 ffi_linux       linux       build
 window          win         build

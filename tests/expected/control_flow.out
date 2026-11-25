@@ -1,0 +1,40 @@
+x += 5 = 105 ok
+x -= 15 = 90 ok
+x *= 3 = 270 ok
+x /= 4 = 67 ok
+x %= 10 = 7 ok
+x <<= 4 = 112 ok
+x >>= 2 = 28 ok
+x &= 12 = 12 ok
+x |= 3 = 15 ok
+x ^= 5 = 10 ok
+n after ++ ++ ++ -- -- = 1 ok
+for i-- sum = 55 ok
+for i += 5 count = 4 ok
+a[2] += 7 = 27 ok
+a[4]++ = 41 ok
+a[0]-- = -1 ok
+a[j+2] *= 2 = 60 ok
+*p += 10; *p -= 1 = 14 ok
+struct hits = 20 ok
+struct misses = 4 ok
+forge
+while(true) break = 7 ok
+FirstMultiple(10, 7) = 14 ok
+FirstMultiple(21, 7) = 21 ok
+SumSkipping(10, 3) = 37 ok
+nested break = 602 ok
+while continue = 25 ok
+zero
+small
+minus one
+big
+Score("B") = 3 ok
+Score("F") = 0 ok
+switch on call = 2 ok
+subject evaluated once = 1 ok
+switch in loop = 119 ok
+default-only switch = 9 ok
+CountDown(5, 0) = 10 ok
+async break/continue = 25 ok
+exit: 0

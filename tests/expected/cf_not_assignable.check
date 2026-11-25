@@ -1,0 +1,3 @@
+cf_not_assignable.fg:9: error: left side of '+=' is not assignable
+cf_not_assignable.fg: 1 error.
+exit: 1

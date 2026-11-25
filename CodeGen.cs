@@ -351,6 +351,8 @@ sealed partial class CodeGen {
 
     string TypeOfUncached(Expr e) {
         switch (e) {
+            case IncDecExpr id:
+                throw new ForgeException($"'{id.Op}' can only be used as a whole statement (x{id.Op};) or as a for-loop step, not inside an expression", id.Line);
             case IntLit:  return "int";
             case FloatLit:return "double";
             case StrLit:  return "string";
@@ -934,7 +936,7 @@ sealed partial class CodeGen {
         }
         void WalkStmt(Stmt s) {
             switch (s) {
-                case VarDecl v: declared.Add((v.Name, v.Line)); WalkExpr(v.E); break;
+                case VarDecl v: if (!v.Name.Contains('$')) declared.Add((v.Name, v.Line)); WalkExpr(v.E); break;   // $-names are compiler temps
                 case Assign a: WalkExpr(a.E); break;                 // target write is not a read
                 case AsmStmt asm:
                     foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(asm.Text, @"\{\s*(\w+)\s*\}")) read.Add(m.Groups[1].Value);

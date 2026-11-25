@@ -24,6 +24,7 @@ static class Fuzz {
         "&", "|", "^", "!", "~", "<", ">", "&&", "||", "?", ":", "=>", "\"", "$\"{", "'",
         "if", "else", "while", "for", "return", "var", "new", "null", "struct", "extern", "asm",
         "spawn", "await", "async", "int", "long", "u8", "string", "bool", "void", "sizeof", "goto",
+        "break", "continue", "switch", "case", "default", "++", "--", "+=", "-=", "<<=", ":",
         "0", "-1", "9223372036854775807", "99999999999999999999", "0x", "1e400", "Main", "x",
     };
     const int TimeoutMs = 10_000;

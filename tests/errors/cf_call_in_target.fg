@@ -1,0 +1,10 @@
+// The target of += is read twice, so a call inside it is rejected.
+module m;
+
+int F() { return 1; }
+
+void Main() {
+    int x = 1;
+    int[] a = new int[4];
+    a[F()] += 1;
+}
