@@ -1,0 +1,17 @@
+# Drive the Forge OS shell (serial) and its PS/2 keyboard (QEMU monitor sendkey).
+# Only commands with deterministic output: no raw tick counts or uptime.
+wait 2
+type help
+wait 0.4
+type timer
+wait 0.6
+type paging
+wait 0.4
+type frobnicate
+wait 0.3
+key forge os
+wait 0.5
+type keys
+wait 0.4
+type divzero
+wait 1

@@ -59,6 +59,52 @@ wsl_path() {
 
 ext_for() { case "$1" in win) echo .exe ;; linux) echo "" ;; kernel) echo .elf ;; esac; }
 
+# QEMU boots the kernel-target examples: $QEMU, else qemu-system-x86_64 on PATH, else
+# the default Windows install. Without it kernels are only built.
+if [ -z "${QEMU:-}" ]; then
+    if command -v qemu-system-x86_64 >/dev/null 2>&1; then QEMU=qemu-system-x86_64
+    elif [ -x "/c/Program Files/qemu/qemu-system-x86_64.exe" ]; then QEMU="/c/Program Files/qemu/qemu-system-x86_64.exe"
+    else QEMU=""; fi
+fi
+
+# Play a boot script into a running kernel. Lines: "wait S" (seconds), "type TEXT"
+# (a line on the serial port), "key CHARS" (PS/2 keystrokes, sent through the QEMU
+# monitor on port $2). Serial text goes to stdout, which is QEMU's serial input.
+boot_feed() {  # script monitor-port
+    local cmd arg i ch mon=0
+    while read -r cmd arg; do
+        case "$cmd" in
+            ''|'#'*) ;;
+            wait) sleep "$arg" ;;
+            type) printf '%s\n' "$arg" ;;
+            key)
+                if [ $mon -eq 0 ]; then exec 3<>"/dev/tcp/127.0.0.1/$2" || return 1; mon=1; fi
+                for ((i = 0; i < ${#arg}; i++)); do
+                    ch=${arg:i:1}; [ "$ch" = " " ] && ch=spc
+                    printf 'sendkey %s\n' "$ch" >&3; sleep 0.1
+                done ;;
+        esac
+    done < <(tr -d '\r' < "$1")
+}
+
+# Boot a kernel image in QEMU with tests/boot/<name>.in as input and compare the
+# serial output with tests/expected/<name>.boot.
+boot_case() {  # name label elf opt
+    local name=$1 label=$2 elf=$3 opt=$4 script expected secs port img
+    script="$ROOT/tests/boot/$name.in"
+    [ -f "$script" ] || { script="$WORK/default.in"; echo "wait 2" > "$script"; }
+    secs=$(tr -d '\r' < "$script" | awk '$1 == "wait" { s += $2 } END { printf "%d", s + 0.999 }')
+    port=$((40000 + RANDOM % 20000))
+    img=$elf; [ "$HOST" = win ] && img=$(cygpath -w "$elf")
+    boot_feed "$script" "$port" | timeout $((secs + 3)) "$QEMU" -kernel "$img" -display none -no-reboot \
+        -serial stdio -monitor "tcp:127.0.0.1:$port,server,nowait" > "$WORK/out" 2> "$WORK/qemu.log"
+    expected="$ROOT/tests/expected/$name.boot"
+    if [ $UPDATE -eq 1 ] && [ -z "$opt" ]; then norm < "$WORK/out" > "$expected"; pass "$label boot (baseline written)"; return; fi
+    if [ ! -f "$expected" ]; then fail "$label boot" "no baseline: run tests/run.sh --update $name"; return; fi
+    if [ "$(norm < "$WORK/out")" = "$(norm < "$expected")" ]; then pass "$label boot"
+    else fail "$label boot" "$(diff <(norm < "$expected") <(norm < "$WORK/out") | head -20; head -3 "$WORK/qemu.log")"; fi
+}
+
 wanted() {
     [ ${#ONLY[@]} -eq 0 ] && return 0
     for o in "${ONLY[@]}"; do [ "$o" = "$1" ] && return 0; done
@@ -72,6 +118,13 @@ run_case() {  # name target opt
 
     if ! "${FORGEC[@]}" build "$ROOT/examples/$name.fg" -o "$exe" --target "$target" $opt > "$WORK/build.log" 2>&1; then
         fail "$label build" "$(cat "$WORK/build.log")"; return
+    fi
+
+    # Kernel images boot in QEMU (when it is installed and the mode is "boot").
+    if [ "$target" = kernel ]; then
+        if [ "$MODE" != boot ]; then pass "$label build"; return; fi
+        if [ -z "$QEMU" ]; then pass "$label build (QEMU not found: not booted)"; return; fi
+        boot_case "$name" "$label" "$exe" "$opt"; return
     fi
 
     # Only run binaries this host can execute (linux ones too, on Windows with FORGE_WSL).
@@ -133,7 +186,11 @@ while read -r name targets MODE _; do
     wanted "$name" || continue
     if [ "$MODE" = check ]; then check_case "$name"; continue; fi
     for t in ${targets//,/ }; do
-        if [ "$t" = kernel ]; then run_case "$name" kernel ""; continue; fi
+        if [ "$t" = kernel ]; then
+            run_case "$name" kernel ""
+            [ "$MODE" = boot ] && run_case "$name" kernel "-O0"
+            continue
+        fi
         run_case "$name" "$t" ""
         [ "$MODE" = run ] && run_case "$name" "$t" "-O0"
     done

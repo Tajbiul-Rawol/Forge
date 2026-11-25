@@ -1,0 +1,2 @@
+# The kernel prints and halts: give it time to finish.
+wait 2

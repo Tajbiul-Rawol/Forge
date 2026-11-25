@@ -7,6 +7,9 @@
 # mode    : run    build, run at -O2 and -O0, compare stdout + exit code with tests/expected/<example>.out
 #           build  must compile (no run: needs network, a GUI, or hardware)
 #           check  `forgec check` must fail; its output must match tests/expected/<example>.check
+#           boot   kernel target: build at -O2 and -O0 and boot in QEMU with tests/boot/<example>.in
+#                  as input; the serial output must match tests/expected/<example>.boot
+#                  (without QEMU the image is only built)
 #
 # On Windows, linux targets are build-only. On Linux, win targets are build-only.
 
@@ -41,8 +44,8 @@ tcp_client      win,linux   build
 web_client      win,linux   build
 web_get         win,linux   build
 redis           win,linux   build
-kernel          kernel      build
-kernel_fib      kernel      build
-kernel_os       kernel      build
+kernel          kernel      boot
+kernel_fib      kernel      boot
+kernel_os       kernel      boot
 
 typos           -           check

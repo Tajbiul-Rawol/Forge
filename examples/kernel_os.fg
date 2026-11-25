@@ -131,7 +131,10 @@ void PagingDemo() {
     long* pml4 = (long*)(cr3 & 0xFFFFFFFFFFFFF000);
     long* pdpt = (long*)(pml4[0] & 0xFFFFFFFFFFFFF000);
     long* pd0 = (long*)(pdpt[0] & 0xFFFFFFFFFFFFF000);
-    Console.WriteLine($"cr3 {cr3}  pml4[0] {pml4[0]}  pd[1] {pd0[1]}");
+    // the boot stub maps 0-1 GB with 2 MB pages: entry 1 is physical 2 MB, present + writable
+    // + large (the CPU also sets the accessed/dirty bits, so compare only these)
+    if ((pd0[1] & 0xFFFFF000) == 0x200000 && (pd0[1] & 0x83) == 0x83) { Console.WriteLine("paging: 0-1 GB identity mapped with 2 MB pages"); }
+    else { Console.WriteLine($"paging: unexpected page directory entry {pd0[1]}"); }
 
     u8* raw = malloc(8192);
     long* pd = (long*)(((long)raw + 4095) & 0xFFFFFFFFFFFFF000);   // 4 KB aligned page directory
@@ -143,7 +146,8 @@ void PagingDemo() {
     long* phys = (long*)malloc(64);          // somewhere in 2 MB..4 MB
     long* alias = (long*)(0x40000000 + ((long)phys - 0x200000));
     *alias = 0x0F0E0D0C;
-    Console.WriteLine($"wrote via {(long)alias}, read via {(long)phys}: {*phys == 0x0F0E0D0C}");
+    if (*phys == 0x0F0E0D0C) { Console.WriteLine("paging: wrote through the new 1 GB mapping, read the same value from physical memory"); }
+    else { Console.WriteLine($"paging: alias at {(long)alias} does not reach {(long)phys}"); }
 }
 
 // ---- shell
@@ -170,11 +174,18 @@ void Main() {
         Print("forge> ");
         string cmd = ReadLine();
         if (cmd == "help") {
-            Console.WriteLine("commands: ticks uptime keys paging divzero reboot halt");
+            Console.WriteLine("commands: ticks uptime timer keys paging divzero reboot halt");
         } else if (cmd == "ticks") {
             Console.WriteLine(k.ticks);
         } else if (cmd == "uptime") {
-            Console.WriteLine($"{k.ticks / 100}.{k.ticks % 100} s");
+            int hundredths = k.ticks % 100;
+            string pad = "";
+            if (hundredths < 10) { pad = "0"; }     // 2.05 s, not 2.5 s
+            Console.WriteLine($"{k.ticks / 100}.{pad}{hundredths} s");
+        } else if (cmd == "timer") {
+            int start = k.ticks;                    // sleep until IRQ 0 has fired 10 more times
+            while (k.ticks < start + 10) { hlt(); }
+            Console.WriteLine("timer: 10 ticks of IRQ 0 (100 Hz)");
         } else if (cmd == "keys") {
             Print($"{k.keyCount} key(s) from the PS/2 keyboard: ");
             while (k.keyTail < k.keyHead) { putc(k.keys[k.keyTail % 256]); k.keyTail = k.keyTail + 1; }

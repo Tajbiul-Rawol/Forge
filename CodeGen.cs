@@ -3547,8 +3547,7 @@ sealed partial class CodeGen {
     // port (see EmitWriteOut / EmitSerial).
     byte[] LowerKernel() {
         const long LOAD = 0x100000;           // load at 1 MB (multiboot standard)
-        // fixed addresses the stub uses
-        const long PML4 = 0x101000, PDPT = 0x102000, PD = 0x103000, STACK_TOP = 0x108000;
+        const int KernelStack = 64 * 1024;    // the boot stack
 
         // The 64-bit code begins after: multiboot header (un-padded 12B) +
         // stub. We reserve a fixed 0x400-byte header region; code starts at
@@ -3569,8 +3568,20 @@ sealed partial class CodeGen {
         Array.Copy(strings, 0, data, stringsOff, strings.Length);
         long heapPtrAddr = dataVaddr + heapPtrOff;
         // heap lives high, well clear of code/data (1MB region), page tables and
-        // stack (0x101000..0x108000): a zero-filled region from 2MB.
+        // stack: a zero-filled region from 2MB.
         long heapBaseAddr = 0x200000;
+
+        // The page tables (PML4, PDPT, PD) and the stack go in the zero-filled tail
+        // right after the image, page aligned. They used to sit at fixed addresses
+        // (0x101000..0x108000), which a kernel with more than ~3 KB of code overlapped:
+        // the boot stub then wrote table entries over the code and the CPU faulted on
+        // the code bytes as page-table entries.
+        long imageEnd = codeVaddr + code.Length + data.Length;
+        long tables = (imageEnd + 0xfff) & ~0xfffL;
+        long PML4 = tables, PDPT = tables + 0x1000, PD = tables + 0x2000;
+        long STACK_TOP = tables + 0x3000 + KernelStack;
+        if (STACK_TOP > heapBaseAddr)
+            throw new ForgeException($"kernel too large: code and data end at 0x{imageEnd:X}; with page tables and a {KernelStack / 1024} KB stack they must stay below the heap at 0x{heapBaseAddr:X}", 1);
 
         // patch relocations in code
         foreach (var (p, off) in _strRelocs) PatchU64(code, p, dataVaddr + stringsOff + off);
@@ -3645,6 +3656,11 @@ sealed partial class CodeGen {
         // First emit lgdt with a placeholder, fix after we know the GDT address.
         int lgdtPos = b.Count;
         Db(0x0f, 0x01, 0x15); Imm32(0);            // lgdt [abs32]  (patch later)
+        // Load the data segments from our GDT (selector 0x10). SS still held the
+        // boot loader's selector, which our GDT didn't define, so the first iretq
+        // from an interrupt handler (it reloads SS) raised a general protection fault.
+        Db(0x66, 0xb8, 0x10, 0x00);                // mov ax, 0x10
+        Db(0x8e, 0xd8); Db(0x8e, 0xc0); Db(0x8e, 0xd0);   // mov ds, ax ; mov es, ax ; mov ss, ax
         // far jump: EA <off32> <sel16>
         Db(0xea); Imm32(codeVaddr); Db(0x08, 0x00);
         // --- GDT ---
@@ -3654,6 +3670,9 @@ sealed partial class CodeGen {
         // code: (1<<43)|(1<<44)|(1<<47)|(1<<53)
         long codeDesc = (1L << 43) | (1L << 44) | (1L << 47) | (1L << 53);
         for (int i = 0; i < 8; i++) b.Add((byte)((codeDesc >> (8 * i)) & 0xff));
+        // 0x10: flat 4 GB data segment (present, writable, 4 KB granularity, 32-bit)
+        long dataDesc = 0x00CF92000000FFFFL;
+        for (int i = 0; i < 8; i++) b.Add((byte)((dataDesc >> (8 * i)) & 0xff));
         int gdtPtrOff = b.Count;
         // gdt pointer: limit (dw), base (dq for lgdt in... actually lgdt in 32-bit uses 6 bytes: limit16+base32)
         // We are still in 32-bit mode at lgdt, so use 16-bit limit + 32-bit base.
