@@ -127,15 +127,28 @@ run_case() {  # name target opt
         boot_case "$name" "$label" "$exe" "$opt"; return
     fi
 
+    # glibc examples link against libc.so.6: run them natively on a glibc Linux, or in
+    # the Docker image $FORGE_DOCKER (e.g. ubuntu:24.04); anywhere else only build them.
+    local via_docker=0
+    if [ "$MODE" = glibc ]; then
+        if [ "$HOST" = linux ] && [ -e /lib64/ld-linux-x86-64.so.2 ]; then :
+        elif [ -n "${FORGE_DOCKER:-}" ]; then via_docker=1
+        else pass "$label build (needs glibc to run: set FORGE_DOCKER=ubuntu:24.04)"; return; fi
+    fi
+
     # Only run binaries this host can execute (linux ones too, on Windows with FORGE_WSL).
     local via_wsl=0
-    [ "$HOST" = win ] && [ "$target" = linux ] && [ -n "${FORGE_WSL:-}" ] && via_wsl=1
-    if [ "$MODE" = build ] || { [ "$target" != "$HOST" ] && [ $via_wsl -eq 0 ]; }; then
+    [ "$HOST" = win ] && [ "$target" = linux ] && [ -n "${FORGE_WSL:-}" ] && [ $via_docker -eq 0 ] && [ "$MODE" != glibc ] && via_wsl=1
+    if [ "$MODE" = build ] || { [ "$target" != "$HOST" ] && [ $via_wsl -eq 0 ] && [ $via_docker -eq 0 ]; }; then
         pass "$label build"; return
     fi
 
     local dir="$WORK/cwd-$name-$target$opt"; mkdir -p "$dir"
-    if [ $via_wsl -eq 1 ]; then
+    if [ $via_docker -eq 1 ]; then
+        local wroot=$WORK; [ "$HOST" = win ] && wroot=$(cygpath -w "$WORK")
+        MSYS_NO_PATHCONV=1 docker run --rm -v "$wroot:/w" -w "/w/$(basename "$dir")" "$FORGE_DOCKER" \
+            timeout 60 "/w/$(basename "$exe")" < /dev/null > "$WORK/out" 2>&1
+    elif [ $via_wsl -eq 1 ]; then
         MSYS_NO_PATHCONV=1 wsl -d "$FORGE_WSL" --cd "$(wsl_path "$dir")" -- timeout 60 "$(wsl_path "$exe")" < /dev/null > "$WORK/out" 2>&1
     else
         ( cd "$dir" && timeout 60 "$exe" ) < /dev/null > "$WORK/out" 2>&1
@@ -192,7 +205,7 @@ while read -r name targets MODE _; do
             continue
         fi
         run_case "$name" "$t" ""
-        [ "$MODE" = run ] && run_case "$name" "$t" "-O0"
+        { [ "$MODE" = run ] || [ "$MODE" = glibc ]; } && run_case "$name" "$t" "-O0"
     done
 done < <(tr -d "\r" < "$ROOT/tests/manifest.txt")
 

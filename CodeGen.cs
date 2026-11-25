@@ -946,19 +946,39 @@ sealed partial class CodeGen {
             case Interp itp: {
                 // $"a{x}b" used as a value -> "a" + str(x) + "b"
                 LowerInterpParts(itp);
-                Expr? acc = null;
-                foreach (var part in itp.Parts) {
-                    Expr piece = part is string lit ? new StrLit { Line = itp.Line, Val = lit }
-                        : ((ValueTuple<Expr, string?>)part).Item1 is var pe && IsStr(TypeOf(pe)) ? pe
-                        : new CallExpr { Line = itp.Line, Name = "str", Args = { ((ValueTuple<Expr, string?>)part).Item1 } };
-                    acc = acc == null ? piece : new Binary { Line = itp.Line, Op = "+", L = acc, R = piece };
-                }
-                if (acc == null) return new StrLit { Line = itp.Line, Val = "" };
-                if (acc is not Binary && acc is not StrLit) acc = new Binary { Line = itp.Line, Op = "+", L = new StrLit { Line = itp.Line, Val = "" }, R = acc };
-                return acc;
+                return InterpConcat(itp);
             }
             default: return e;
         }
+    }
+
+    // $"a{x}b" -> "a" + str(x) + "b" (string holes are used as they are)
+    Expr InterpConcat(Interp itp) {
+        Expr? acc = null;
+        foreach (var part in itp.Parts) {
+            Expr piece = part is string lit ? new StrLit { Line = itp.Line, Val = lit }
+                : ((ValueTuple<Expr, string?>)part).Item1 is var pe && IsStr(TypeOf(pe)) ? pe
+                : new CallExpr { Line = itp.Line, Name = "str", Args = { ((ValueTuple<Expr, string?>)part).Item1 } };
+            acc = acc == null ? piece : new Binary { Line = itp.Line, Op = "+", L = acc, R = piece };
+        }
+        if (acc == null) return new StrLit { Line = itp.Line, Val = "" };
+        if (acc is not Binary && acc is not StrLit) acc = new Binary { Line = itp.Line, Op = "+", L = new StrLit { Line = itp.Line, Val = "" }, R = acc };
+        return acc;
+    }
+
+    // Does a hole run code that could print or otherwise be seen (a Forge function,
+    // an extern, await, spawn)? Then Console.WriteLine must build the whole string
+    // before printing any of it, as C# does.
+    bool InterpRunsUserCode(Interp itp) {
+        bool hit = false;
+        foreach (var part in itp.Parts) {
+            if (part is not ValueTuple<Expr, string?> hole) continue;
+            Walker.WalkExpr(hole.Item1, e => {
+                if (e is CallExpr c && ((_funcs.TryGetValue(c.Name, out var f) && !f.IsRuntime) || _externs.ContainsKey(c.Name) || c.Name == "join")) hit = true;   // join waits for a thread running user code
+                else if (e is TryExpr or AwaitExpr or SpawnExpr or WhenAllExpr or YieldExpr or InlineExpr) hit = true;
+            }, null);
+        }
+        return hit;
     }
     void LowerInterpParts(Interp itp) {
         for (int k = 0; k < itp.Parts.Count; k++)
@@ -1102,7 +1122,12 @@ sealed partial class CodeGen {
                 break;
             }
             case ThrowStmt th: if (_cur.Throws == null) throw new ForgeException($"'{_cur.Name}' does not declare 'throws'", th.Line); if (th.Err != _cur.Throws) throw new ForgeException($"'{_cur.Name}' throws {_cur.Throws}, not {th.Err}", th.Line); break;
-            case PrintStmt p: if (TypeOf(p.Arg) == "double") p.Arg = DoubleText(p.Arg, null, p.Line); break;
+            case PrintStmt p: {
+                var pt0 = TypeOf(p.Arg);      // also turns double holes into strings
+                if (pt0 == "double") p.Arg = DoubleText(p.Arg, null, p.Line);
+                else if (p.Arg is Interp itp && InterpRunsUserCode(itp)) { p.Arg = InterpConcat(itp); TypeOf(p.Arg); }
+                break;
+            }
             case ExprStmt e: TypeOf(e.E); break;
         }
     }
@@ -2571,7 +2596,14 @@ sealed partial class CodeGen {
         _a.Db(0x88,0x13);                            // mov [rbx], dl
         _a.Db(0x48,0x85,0xc0);                       // test rax, rax
         _a.JnzRel(idg);
-        // result pointer is rbx (points at first digit). For negatives we ignored '-'; acceptable for unsigned-ish.
+        // rbx points at the first digit; a negative value gets its '-' in front.
+        // (This used to drop the sign: str(-1) gave "1". The digit loop divides the
+        // negated value unsigned, so long.MinValue comes out right as well.)
+        string inosign = NewLabel("inosign");
+        _a.TestRR(R12, R12); _a.Jcc(0x9, inosign);   // jns: not negative
+        _a.Db(0x48,0xff,0xcb);                       // dec rbx
+        _a.Db(0xc6,0x03,0x2d);                       // mov byte [rbx], '-'
+        _a.Label(inosign);
         _a.Db(0x48,0x89,0xd8);                       // mov rax, rbx
         _a.Db(0x41,0x5c,0x5d,0x5b);                  // pop r12,rbp,rbx
         _a.Ret();
@@ -2579,7 +2611,16 @@ sealed partial class CodeGen {
         // atoi(rdi=s) -> rax = integer
         _a.Label("atoi");
         _a.Db(0x48,0x31,0xc0);                       // xor rax, rax
-        string aL=NewLabel("aL"), aD=NewLabel("aD");
+        string aL=NewLabel("aL"), aD=NewLabel("aD"), aPos=NewLabel("aPos"), aDigits=NewLabel("aDigits");
+        // an optional sign: r8 = 1 for '-' (toint("-42") used to give 0)
+        _a.MovRI(R8, 0);
+        _a.Db(0x80,0x3f,0x2d); _a.Jcc(0x5, aPos);    // cmp byte [rdi], '-'; jne
+        _a.MovRI(R8, 1); _a.Db(0x48,0xff,0xc7);      // inc rdi
+        _a.JmpRel(aDigits);
+        _a.Label(aPos);
+        _a.Db(0x80,0x3f,0x2b); _a.Jcc(0x5, aDigits); // cmp byte [rdi], '+'; jne
+        _a.Db(0x48,0xff,0xc7);                       // inc rdi
+        _a.Label(aDigits);
         _a.Label(aL);
         _a.Db(0x0f,0xb6,0x0f);                       // movzx ecx, byte [rdi]
         _a.Db(0x80,0xf9,0x30);                       // cmp cl, '0'
@@ -2591,7 +2632,12 @@ sealed partial class CodeGen {
         _a.Db(0x48,0x01,0xc8);                       // add rax, rcx
         _a.Db(0x48,0xff,0xc7);                       // inc rdi
         _a.JmpRel(aL);
-        _a.Label(aD); _a.Ret();
+        _a.Label(aD);
+        string aRet = NewLabel("aRet");
+        _a.TestRR(R8, R8); _a.Jcc(0x4, aRet);
+        _a.Db(0x48,0xf7,0xd8);                       // neg rax
+        _a.Label(aRet);
+        _a.Ret();
 
         // substr(rdi=s, rsi=start, rdx=len) -> rax = new string
         _a.Label("substr");

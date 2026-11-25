@@ -4,4 +4,6 @@ escaped quote: say "hi"say "hi" len=3
 nested: [forge][forge] and <qq><qq>
 compare: 1 forge!
 outer "quotes" and 0 literal
+Noisy runs first
+built before printing: 42
 exit: 0
