@@ -1,0 +1,44 @@
+# Forge regression manifest.
+#
+#   <example>   <targets>   <mode>
+#
+# example : file name in examples/ without .fg
+# targets : comma list of win, linux, kernel
+# mode    : run    build, run at -O2 and -O0, compare stdout + exit code with tests/expected/<example>.out
+#           build  must compile (no run: needs network, a GUI, or hardware)
+#           check  `forgec check` must fail; its output must match tests/expected/<example>.check
+#
+# On Windows, linux targets are build-only. On Linux, win targets are build-only.
+
+arrays          win,linux   run
+async           win,linux   run
+bench_fib       win,linux   run
+features        win,linux   run
+fileio          win,linux   run
+forloop         win,linux   run
+hello           win,linux   run
+inline_asm      win,linux   run
+lowlevel        win,linux   run
+memory          win,linux   run
+mytest          win,linux   run
+opt_test        win,linux   run
+strings         win,linux   run
+structs         win,linux   run
+threads         win,linux   run
+threads_test    win,linux   run
+turing          win,linux   run
+uart            win,linux   run
+ffi             win         run
+
+ffi_linux       linux       build
+window          win         build
+http_server     win,linux   build
+tcp_client      win,linux   build
+web_client      win,linux   build
+web_get         win,linux   build
+redis           win,linux   build
+kernel          kernel      build
+kernel_fib      kernel      build
+kernel_os       kernel      build
+
+typos           -           check

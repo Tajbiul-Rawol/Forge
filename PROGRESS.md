@@ -112,18 +112,20 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
 
 ## 5. How to verify after changes
 
-There's no committed test runner yet. The checks used were:
-1. **Windows regression.** Build every example in `examples/` (except kernel/typos/network ones) with and without `-O0`, run it from inside `examples/`, and compare the output with the previous build's output.
-   - Examples covered: arrays, async, features, fileio, forloop, hello, lowlevel, mytest, strings, threads, threads_test, turing, opt_test, uart, structs, inline_asm, ffi.
-   - Also check the JSON output `161418380 / 118578658335` and fib `102334155`.
-   - The kernel examples must still build.
-2. **Linux.** Same outputs in WSL: `wsl -d docker-desktop` (musl-based). Use `MSYS_NO_PATHCONV=1` from Git Bash, or `/lib/...` arguments get rewritten into Windows paths.
+Workflow: every change goes on a feature branch; run the tests before merging into `main` and pushing.
+
+1. **Regression suite: `tests/run.sh`** (Git Bash or Linux bash). It builds forgec, then works through `tests/manifest.txt`:
+   - `run` examples are built at -O2 and -O0, run in a temp folder, and stdout + exit code must match `tests/expected/<name>.out` (fib `102334155` is in `bench_fib`).
+   - `build` examples (network, GUI, kernel) must compile for every listed target.
+   - `check` examples must fail `forgec check` with the output in `tests/expected/<name>.check`.
+   - `FORGE_WSL=docker-desktop tests/run.sh` also runs the Linux binaries inside WSL (musl). Use `MSYS_NO_PATHCONV=1` for manual WSL commands from Git Bash.
+   - `tests/run.sh --update [names]` rewrites baselines. Review the diff before committing it.
+   - CI (`.github/workflows/tests.yml`) runs the suite natively on Windows and Ubuntu on every push and PR.
+2. **JSON benchmark output** must stay `161418380 / 118578658335`.
 3. **Benchmarks.**
    - `benchmarks\json\run.ps1`, `benchmarks\cpu-fibonacci\run.ps1`, `benchmarks\threads\run.ps1`.
    - `benchmarks\http-server\run_mt.ps1` (Windows) and `run_mt.sh` (Linux).
 4. **Encodings.** To check machine code: `dumpbin /disasm file.exe` (MSVC; needs vcvars64).
-
-Worth doing next: commit the regression script and baseline outputs into the repo (for example `tests/`). They currently live only in a temporary folder.
 
 ---
 
@@ -132,6 +134,8 @@ Worth doing next: commit the regression script and baseline outputs into the rep
 - **The kernel features have never been booted.** No QEMU on this machine. Encodings were checked with dumpbin, but `kernel_os.fg` is untested at run time. Next step: `winget install qemu`, then `qemu-system-x86_64 -kernel os.elf -serial stdio`.
 - **glibc dynamic linking is untested** (only musl was available). The default `--interp` is `/lib64/ld-linux-x86-64.so.2`.
 - A string literal inside `{...}` of an interpolated string doesn't parse (the lexer ends the string early).
+- `forgec check` stops at the first error (`typos.fg` has two; only `Squre` is reported).
+- `writefile`/`readfile` fail silently (return 0 / ""), with no error a program can test for.
 - Interrupt handlers must not allocate while interrupting code that also allocates (the allocator isn't reentrant).
 - C callbacks must run on the main thread or a Forge thread (they need Forge's thread pointer).
 - On Linux, call `fflush(null)` before exiting if you used `printf` (Forge exits with `exit_group`).
