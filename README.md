@@ -158,7 +158,7 @@ tests/run.sh --update hello           # accept new output as the baseline
 ```
 
 Use Git Bash on Windows. `tests/manifest.txt` lists every example and whether it is run,
-only built, or expected to fail `forgec check`. Each file in `tests/errors/` must fail
+only built, booted in QEMU (kernel examples), or expected to fail `forgec check`. Each file in `tests/errors/` must fail
 `forgec check` with exactly the diagnostics in `tests/expected/<name>.check`. The suite
 also checks command-line handling (exit codes, no stack traces).
 
@@ -463,13 +463,21 @@ instructions (`lgdt`, `lidt`, `ltr`, `mov cr3, rax`, `mov ds, ax`, `in`/`out`,
 `iretq`, `retfq`, `swapgs`, `wrmsr`, `cpuid`, ...) are supported. Scratch registers
 (rax rcx rdx rsi rdi r8-r11) are free; save rbx and r12-r15 if you touch them.
 
-**Paging.** The boot stub identity-maps the first 1 GB with 2 MB pages
-(PML4 at 0x101000 -> PDPT 0x102000 -> PD 0x103000). Walk or change the tables through
-pointers from `read_cr3()`, then `invlpg` or `write_cr3`.
+**Paging.** The boot stub identity-maps the first 1 GB with 2 MB pages through a
+PML4 -> PDPT -> PD placed in the first free pages after the kernel image (CR3 holds the
+PML4's address). Walk or change the tables through pointers from `read_cr3()`, then
+`invlpg` or `write_cr3`.
+
+**Memory layout.** The kernel loads at 1 MB. After its code and data come the page
+tables and a 64 KB boot stack; the heap (`malloc`, `heapbase()`) starts at 2 MB. A
+kernel too large to fit below 2 MB with its tables and stack is a compile error. The
+GDT has a 64-bit code segment (0x08) and a flat data segment (0x10, also in DS/ES/SS).
 
 `examples/kernel_os.fg` puts it together: an IDT from a `packed struct`, exception
 handlers, the PIC remapped, a 100 Hz PIT timer, a PS/2 keyboard driver (IRQ 1),
-mapping a new virtual address, and a command shell over the serial port.
+mapping a new virtual address, and a command shell over the serial port
+(`help`, `ticks`, `uptime`, `timer`, `keys`, `paging`, `divzero`, `reboot`, `halt`).
+It is booted in QEMU by the test suite on every change (see "Freestanding kernel target").
 
 ---
 
@@ -684,6 +692,24 @@ qemu-system-x86_64 -kernel kernel.elf -nographic -serial mon:stdio
 This runs recursion, loops, and integer/string output entirely in ring 0 with no
 OS underneath. It is a freestanding kernel, not a loadable OS driver (a Windows
 .sys needs Microsoft signing; a Linux .ko needs kernel-version-matched headers).
+
+Try the small OS, typing commands into its serial shell (`help` lists them; with
+`-serial stdio` instead of `-nographic`, keys typed into the QEMU window reach the
+PS/2 keyboard driver):
+
+```
+forgec build examples/kernel_os.fg -o os.elf --target kernel
+qemu-system-x86_64 -kernel os.elf -nographic
+```
+
+**Tested by booting.** `tests/run.sh` boots `kernel.fg`, `kernel_fib.fg` and
+`kernel_os.fg` in QEMU at -O2 and -O0 and compares their serial output with
+`tests/expected/<name>.boot`. `tests/boot/<name>.in` scripts the input: `wait S`,
+`type TEXT` (a line on the serial port) and `key CHARS` (PS/2 keystrokes injected
+through the QEMU monitor). For `kernel_os` that exercises the timer interrupt, the
+keyboard interrupt, paging and the divide-error exception handler. QEMU is found as
+`$QEMU`, on `PATH`, or in `C:\Program Files\qemu`; without it kernels are only built.
+CI installs QEMU on Ubuntu.
 
 ## Strings, files, networking (Linux + Windows)
 

@@ -107,6 +107,13 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
 
+### Session: kernel boot tests (2026-11-26)
+- QEMU installed (C:\Program Files\qemu). `kernel.fg` and `kernel_fib.fg` booted at once; `kernel_os.fg` exposed two boot bugs:
+  - the page tables and stack sat at fixed addresses (0x101000..0x108000) that a kernel with more than ~3 KB of code overlapped: the stub wrote table entries over the code and the CPU took the code bytes as page-table entries (page fault with the reserved-bit error, then a triple fault). `LowerKernel` now puts PML4/PDPT/PD and a 64 KB stack in the zero-filled tail after the image, page aligned, and errors if that would reach the heap at 2 MB.
+  - the GDT had no data segment, so SS kept the boot loader's selector 0x10 and the first `iretq` from an interrupt (it reloads SS) raised #GP. The stub now adds a flat data segment at 0x10 and loads DS/ES/SS.
+- After that the whole OS worked: timer IRQ, PS/2 keyboard IRQ (keys injected with the QEMU monitor's sendkey), paging alias, #DE handler, shell. `uptime` printed 2.05 s as 2.5 s (fixed); new `timer` command; `paging` prints no addresses, so the output is deterministic.
+- `tests/run.sh` mode `boot`: boots kernel images with `tests/boot/<name>.in` (wait / type / key) and compares serial output with `tests/expected/<name>.boot`; CI installs qemu-system-x86 on Ubuntu. Windows/Linux binaries are byte-identical.
+
 ### Session: double arithmetic (2026-11-26)
 - Doubles are raw IEEE bits in GPRs like every other value, so locals, arrays, struct fields, params, returns, threads and the register allocator are unchanged. Each operation: `LoadDoubleOperands` (left -> xmm0, right -> xmm1; a plain literal/local is loaded last, so no push/pop), one SSE instruction, `movq rax, xmm0`. Comparisons use `ucomisd` with NaN-correct flags; `EmitDoubleJump` branches on the flags directly. Unary minus flips bit 63; casts use cvtsi2sd / cvttsd2si.
 - Type checking: int operands and int values assigned to double are wrapped by `ToDouble`/`Coerce` (an IntLit becomes a FloatLit) at every assignment site: decls, assigns, element/pointer stores, args, returns, struct initializers, try-else, spawn.
@@ -173,7 +180,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 ## 6. Not verified / known limits
 
-- **The kernel features have never been booted.** No QEMU on this machine. Encodings were checked with dumpbin, but `kernel_os.fg` is untested at run time. Next step: `winget install qemu`, then `qemu-system-x86_64 -kernel os.elf -serial stdio`.
+- **Kernel target:** booted in QEMU (TCG) by the test suite, not on real hardware yet (no GRUB ISO). Serial input from a Windows pipe arrives without CR, so the shell is fed LF line endings. Interrupt handlers must not use `double` (it is not available on the kernel target anyway).
 - **glibc dynamic linking is untested** (only musl was available). The default `--interp` is `/lib64/ld-linux-x86-64.so.2`.
 - Syntax errors stop the compile at the first one (type errors are all reported). Errors have a line but no column.
 - `ioerr()` gives the OS error code, not a portable one: compare codes per OS, or just test `!= 0`. `try` on a builtin cannot tell you the code either (use `ioerr()` after it). `tcp_connect` on Linux takes IP addresses only (no DNS without libc); a host name fails with EINVAL (22).
@@ -187,7 +194,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 ## 7. Suggested next steps
 
-1. Install QEMU and boot-test `kernel_os.fg` (interrupts, keyboard, paging, shell). Fix what breaks.
+1. (Done: kernel boot tests in QEMU.) Next for bare metal: enable SSE at boot so `double` works there, a bootable GRUB ISO for real hardware, APIC timer, framebuffer.
 2. Commit the regression tests (see section 5).
 3. Language: generics; a math library for double (sqrt, sin, ...), exponent literals, and keeping doubles in SSE registers for speed. (`+=`/`++`, `break`/`continue`, `switch`, runtime I/O errors and `double` are done.)
 4. (Done: string literals inside interpolation holes.)

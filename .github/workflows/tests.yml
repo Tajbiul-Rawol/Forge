@@ -16,6 +16,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - name: Install QEMU (boots the kernel examples)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q qemu-system-x86
       - name: Regression tests
         shell: bash
         run: tests/run.sh
