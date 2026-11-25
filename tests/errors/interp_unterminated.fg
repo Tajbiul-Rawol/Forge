@@ -1,0 +1,6 @@
+// A string inside an interpolation hole that never ends.
+module m;
+
+void Main() {
+    Console.WriteLine($"value {Twice("abc)}");
+}

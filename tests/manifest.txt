@@ -31,6 +31,7 @@ uart            win,linux   run
 ffi             win         run
 control_flow    win,linux   run
 io_errors       win,linux   run
+interp_strings  win,linux   run
 
 ffi_linux       linux       build
 window          win         build

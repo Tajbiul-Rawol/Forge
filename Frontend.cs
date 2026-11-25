@@ -58,7 +58,7 @@ sealed class Lexer {
             if (c is ' ' or '\t' or '\r') { _i++; continue; }
             if (c == '/' && Nxt == '/') { while (_i < _s.Length && _s[_i] != '\n') _i++; continue; }
             if (c == '"') { toks.Add(LexString()); continue; }
-            if (c == '$' && Nxt == '"') { _i++; toks.Add(LexString()); continue; }
+            if (c == '$' && Nxt == '"') { _i++; toks.Add(LexInterpString()); continue; }
             if (char.IsDigit(c)) { toks.Add(LexNumber()); continue; }
             if (char.IsLetter(c) || c == '_') { toks.Add(LexWord()); continue; }
             bool matched = false;
@@ -79,6 +79,68 @@ sealed class Lexer {
         }
         toks.Add(new Tok(TokKind.Eof, "", _line));
         return toks;
+    }
+
+    // $"..." : text outside {holes} is unescaped like a normal string; the holes are
+    // kept verbatim (ParseInterp lexes them later), and a string literal inside a
+    // hole, $"{f("a\"b")}", is copied whole so its quotes don't end the outer string.
+    Tok LexInterpString() {
+        int line = _line; _i++; var sb = new System.Text.StringBuilder();
+        int depth = 0;
+        while (true) {
+            if (_i >= _s.Length || _s[_i] == '\n') throw new ForgeException("unterminated string", line);
+            char c = _s[_i];
+            if (depth == 0) {
+                if (c == '"') { _i++; break; }
+                if (c == '\\') {
+                    char e = Nxt;
+                    sb.Append(e switch { 'n' => '\n', 'r' => '\r', 't' => '\t', '0' => '\0', '\\' => '\\', '"' => '"', '\'' => '\'', _ => e });
+                    _i += 2; continue;
+                }
+                if (c == '{') depth = 1;
+                sb.Append(c); _i++;
+            } else {
+                if (c == '"' || (c == '$' && Nxt == '"')) {
+                    int end = StringEnd(_s, _i);
+                    if (end < 0) throw new ForgeException("unterminated string inside an interpolation hole", line);
+                    sb.Append(_s, _i, end - _i); _i = end; continue;
+                }
+                if (c == '{') depth++;
+                else if (c == '}') depth--;
+                sb.Append(c); _i++;
+            }
+        }
+        return new Tok(TokKind.Str, sb.ToString(), line);
+    }
+
+    // s[i] starts a string literal ("..." or $"..."): the index just past its closing
+    // quote, or -1 if it is unterminated. Escapes are skipped, and so are the holes of
+    // an interpolated string (which may contain string literals of their own).
+    public static int StringEnd(string s, int i) {
+        bool interp = s[i] == '$';
+        if (interp) i++;
+        i++;                                        // opening quote
+        int depth = 0;
+        while (i < s.Length) {
+            char c = s[i];
+            if (c == '\n') return -1;
+            if (depth == 0) {
+                if (c == '\\') { i += 2; continue; }
+                if (c == '"') return i + 1;
+                if (interp && c == '{') depth = 1;
+                i++;
+            } else {
+                if (c == '"' || (c == '$' && i + 1 < s.Length && s[i + 1] == '"')) {
+                    int end = StringEnd(s, i);
+                    if (end < 0) return -1;
+                    i = end; continue;
+                }
+                if (c == '{') depth++;
+                else if (c == '}') depth--;
+                i++;
+            }
+        }
+        return -1;
     }
 
     Tok LexString() {
@@ -867,6 +929,12 @@ sealed class Parser {
                 int depth = 1, j = k + 1; var inner = new System.Text.StringBuilder(); string? fmt = null;
                 while (j < raw.Length && depth > 0) {
                     char d = raw[j];
+                    if (d == '"' || (d == '$' && j + 1 < raw.Length && raw[j + 1] == '"')) {
+                        // a string literal inside the hole: its braces and colons are text
+                        int end = Lexer.StringEnd(raw, j);
+                        if (end < 0) throw new ForgeException("unterminated string inside an interpolation hole", line);
+                        inner.Append(raw, j, end - j); j = end; continue;
+                    }
                     if (d == '{') depth++;
                     else if (d == '}') { depth--; if (depth == 0) break; }
                     if (d == ':' && depth == 1) { fmt = ""; j++; while (j < raw.Length && raw[j] != '}') { fmt += raw[j]; j++; } break; }

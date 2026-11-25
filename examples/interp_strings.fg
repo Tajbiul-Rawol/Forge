@@ -1,0 +1,17 @@
+module interp_strings;
+
+// String literals inside $"..." holes: arguments, braces and colons inside the
+// literal, escaped quotes, and interpolated strings nested inside holes.
+
+string Twice(string s) { return s + s; }
+int Len(string s) { return s.length; }
+
+void Main() {
+    string name = "forge";
+    Console.WriteLine($"hello {Twice("ab")}!");
+    Console.WriteLine($"brace in literal: {Twice("}")} colon: {Twice("a:b")}");
+    Console.WriteLine($"escaped quote: {Twice("say \"hi\"")} len={Len("x\ty")}");
+    Console.WriteLine($"nested: {Twice($"[{name}]")} and {Twice($"<{Twice("q")}>")}");
+    Console.WriteLine($"compare: {name == "forge"} {name + "!"}");
+    Console.WriteLine($"outer \"quotes\" and {Len("")} {"literal"}");
+}
