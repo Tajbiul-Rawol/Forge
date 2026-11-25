@@ -334,13 +334,19 @@ sealed partial class CodeGen {
     // _locals is rebuilt for another function (SetupLocalsForCheck, EmitFunc).
     readonly Dictionary<Expr, string> _typeCache = new(ReferenceEqualityComparer.Instance);
 
+    // Builtins that report failure through ioerr(); `try` works on these like on a
+    // `throws` function (the error is called IOError).
+    static readonly HashSet<string> FallibleBuiltins = new() {
+        "readfile", "writefile", "tcp_connect", "tcp_listen", "accept", "send", "recv", "closefd",
+    };
+
     // Builtins type-checked in TypeOf's CallExpr case (async-runtime intrinsics are handled separately).
     static readonly HashSet<string> CheckedBuiltins = new() {
         "accept","atomic_add","atomic_cas","atomic_load","atomic_store","atomic_xchg","cli","closefd","cpu_count",
         "exit","getc","heapbase","heapmark","heapreset","hlt","inb","inl","invlpg","inw","join","lgdt","lidt",
         "lock","malloc","now_ns","outb","outl","outw","pause","putc","rdmsr","rdtsc","read_cr0","read_cr2",
         "read_cr3","read_cr4","readfile","recv","send","sleep_ms","sti","str","strlen","substr","tcp_connect",
-        "tcp_listen","toint","unlock","write_cr0","write_cr3","write_cr4","writefile","wrmsr",
+        "tcp_listen","toint","unlock","write_cr0","write_cr3","write_cr4","writefile","wrmsr","ioerr",
     };
     string TypeOf(Expr e) {
         if (_typeCache.TryGetValue(e, out var cached)) return cached;
@@ -465,14 +471,14 @@ sealed partial class CodeGen {
                 if (c.Name == "toint")   { Need(c, 1); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "toint(s) takes a string"); return "int"; }
                 if (c.Name == "strlen")  { Need(c, 1); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "strlen(s) takes a string"); return "int"; }
                 if (c.Name == "substr")  { Need(c, 3); if (!IsStr(TypeOf(c.Args[0])) || !IsInt(TypeOf(c.Args[1])) || !IsInt(TypeOf(c.Args[2]))) Err(c, "substr(s,start,len)"); return "string"; }
-                if (c.Name == "readfile"){ Need(c, 1); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "readfile(path) takes a string"); return "string"; }
-                if (c.Name == "writefile"){ Need(c, 2); if (!IsStr(TypeOf(c.Args[0])) || !IsStr(TypeOf(c.Args[1]))) Err(c, "writefile(path, contents)"); return "int"; }
-                if (c.Name == "tcp_connect"){ Need(c, 2); if (!IsStr(TypeOf(c.Args[0])) || !IsInt(TypeOf(c.Args[1]))) Err(c, "tcp_connect(host, port)"); return "int"; }
-                if (c.Name == "tcp_listen"){ Need(c, 1); if (!IsInt(TypeOf(c.Args[0]))) Err(c, "tcp_listen(port)"); return "int"; }
-                if (c.Name == "accept")  { Need(c, 1); if (!IsInt(TypeOf(c.Args[0]))) Err(c, "accept(serverfd)"); return "int"; }
-                if (c.Name == "send")    { Need(c, 2); if (!IsInt(TypeOf(c.Args[0])) || !IsStr(TypeOf(c.Args[1]))) Err(c, "send(fd, string)"); return "int"; }
-                if (c.Name == "recv")    { Need(c, 2); if (!IsInt(TypeOf(c.Args[0])) || !IsInt(TypeOf(c.Args[1]))) Err(c, "recv(fd, maxbytes)"); return "string"; }
-                if (c.Name == "closefd") { Need(c, 1); if (!IsInt(TypeOf(c.Args[0]))) Err(c, "closefd(fd)"); return "int"; }
+                if (c.Name == "readfile"){ Need(c, 1); NeedOs(c); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "readfile(path) takes a string"); return "string"; }
+                if (c.Name == "writefile"){ Need(c, 2); NeedOs(c); if (!IsStr(TypeOf(c.Args[0])) || !IsStr(TypeOf(c.Args[1]))) Err(c, "writefile(path, contents)"); return "int"; }
+                if (c.Name == "tcp_connect"){ Need(c, 2); NeedOs(c); if (!IsStr(TypeOf(c.Args[0])) || !IsInt(TypeOf(c.Args[1]))) Err(c, "tcp_connect(host, port)"); return "int"; }
+                if (c.Name == "tcp_listen"){ Need(c, 1); NeedOs(c); if (!IsInt(TypeOf(c.Args[0]))) Err(c, "tcp_listen(port)"); return "int"; }
+                if (c.Name == "accept")  { Need(c, 1); NeedOs(c); if (!IsInt(TypeOf(c.Args[0]))) Err(c, "accept(serverfd)"); return "int"; }
+                if (c.Name == "send")    { Need(c, 2); NeedOs(c); if (!IsInt(TypeOf(c.Args[0])) || !IsStr(TypeOf(c.Args[1]))) Err(c, "send(fd, string)"); return "int"; }
+                if (c.Name == "recv")    { Need(c, 2); NeedOs(c); if (!IsInt(TypeOf(c.Args[0])) || !IsInt(TypeOf(c.Args[1]))) Err(c, "recv(fd, maxbytes)"); return "string"; }
+                if (c.Name == "closefd") { Need(c, 1); NeedOs(c); if (!IsInt(TypeOf(c.Args[0]))) Err(c, "closefd(fd)"); return "int"; }
                 if (c.Name == "join") {
                     if (c.Args.Count != 1 || !IsInt(TypeOf(c.Args[0])))
                         throw new ForgeException("join(handle) takes one thread handle", c.Line);
@@ -495,6 +501,7 @@ sealed partial class CodeGen {
                 }
                 if (c.Name == "cpu_count") { Need(c, 0); NeedOs(c); return "int"; }
                 if (c.Name == "now_ns")    { Need(c, 0); NeedOs(c); return "int"; }   // monotonic clock, nanoseconds
+                if (c.Name == "ioerr")     { Need(c, 0); NeedOs(c); return "int"; }   // error code of the last I/O builtin, 0 = ok
                 if (c.Name == "sleep_ms")  { Need(c, 1); NeedOs(c); if (!IsInt(TypeOf(c.Args[0]))) Err(c, "sleep_ms(milliseconds)"); return "void"; }
                 if (c.Name == "exit") {
                     if (c.Args.Count != 1 || !IsInt(TypeOf(c.Args[0])))
@@ -519,6 +526,16 @@ sealed partial class CodeGen {
                 return f.Ret;
             }
             case TryExpr t: {
+                if (!_funcs.ContainsKey(t.Call.Name) && CheckedBuiltins.Contains(t.Call.Name)) {
+                    // try on an I/O builtin: it fails when it sets ioerr (see FallibleBuiltins)
+                    if (!FallibleBuiltins.Contains(t.Call.Name))
+                        throw new ForgeException($"'{t.Call.Name}' cannot fail - remove 'try'", t.Line);
+                    var bt = TypeOf(t.Call);
+                    if (t.Else == null && _cur.Throws == null)
+                        throw new ForgeException("a bare 'try' propagates - the enclosing function must declare 'throws'", t.Line);
+                    if (t.Else != null) { var et = TypeOf(t.Else); if (!Assignable(bt, et)) throw new ForgeException($"'else' fallback must be {bt}", t.Line); }
+                    return bt;
+                }
                 if (!_funcs.TryGetValue(t.Call.Name, out var f)) throw new ForgeException($"unknown function '{t.Call.Name}'", t.Line);
                 if (f.Throws == null) throw new ForgeException($"'{t.Call.Name}' does not throw - remove 'try'", t.Line);
                 CheckArgs(f, t.Call);
@@ -2203,7 +2220,7 @@ sealed partial class CodeGen {
     }
 
     void EmitTry(TryExpr t) {
-        var f = _funcs[t.Call.Name];
+        if (!_funcs.ContainsKey(t.Call.Name)) { EmitTryBuiltin(t); return; }
         EmitCall(t.Call);                  // value->rax, ok-flag->rdx, err ptr->rsi
         string ok = NewLabel("tryok");
         _a.Db(0x48,0x85,0xd2);             // test rdx, rdx
@@ -2214,6 +2231,25 @@ sealed partial class CodeGen {
         } else {
             // propagate: print nothing, just bubble rdx=0/rsi up and return
             if (_cur.Throws != null) { _a.MovRdxImm(0); /* rsi already holds err */ EmitFuncEpilogue(); }
+        }
+        _a.Label(ok);
+    }
+
+    // try on an I/O builtin: call it, then a nonzero ioerr takes the error path
+    // (the fallback value, or propagate an IOError like a bare try on a throws function).
+    void EmitTryBuiltin(TryExpr t) {
+        EmitCall(t.Call);                  // value -> rax
+        string ok = NewLabel("tryok");
+        EmitLoadBlockR10();
+        _a.Mem(0x83, 7, R10, BlkIoErr); _a.Db(0);   // cmp qword [r10+ioerr], 0
+        _a.Jcc(0x4, ok);                   // je: it worked
+        if (t.Else != null) {
+            EmitExpr(t.Else);
+        } else if (_cur.Throws != null) {
+            int off = InternString($"IOError: {t.Call.Name} failed\n");
+            AddStrReloc(off);              // mov rsi, message
+            _a.MovRdxImm(0);
+            EmitFuncEpilogue();
         }
         _a.Label(ok);
     }
@@ -2473,9 +2509,59 @@ sealed partial class CodeGen {
         _a.Db(0x88,0x0e);                            // mov [rsi], cl (last octet)
         _a.Ret();
 
+        EmitIoStatus();
         if (_target == Target.Windows) EmitWinRuntime();
         else EmitSyscallRuntime();
     }
+
+    // ---- I/O status (ioerr). Every I/O builtin stores its outcome in the calling
+    // thread's arena block: 0 on success, else the OS error code (GetLastError /
+    // WSAGetLastError on Windows, errno on Linux). These helpers preserve every
+    // register except r10 and the flags.
+    void EmitIoStatus() {
+        if (_target == Target.Kernel) {          // no I/O builtins on bare metal (NeedOs); keep the labels
+            _a.Label("io_ok"); _a.Ret();
+            _a.Label("io_err_win"); _a.Ret();
+            _a.Label("io_err_neg"); _a.Ret();
+            return;
+        }
+        _a.Label("io_ok");                       // ioerr = 0
+        EmitLoadBlockR10(); _a.StImm(R10, BlkIoErr, 0); _a.Ret();
+
+        _a.Label("io_err_win");                  // ioerr = GetLastError() (TEB.LastErrorValue, gs:[0x68] on x64;
+        EmitLoadBlockR10(); _a.PushR(RAX);       //  WSAGetLastError returns the same field)
+        _a.Db(0x65, 0x8b, 0x04, 0x25, 0x68, 0, 0, 0);   // mov eax, gs:[0x68]
+        string have = NewLabel("iow_have");
+        _a.TestRR(RAX, RAX); _a.Jcc(0x5, have);           // a failure must never read as 0:
+        _a.MovRI(RAX, 31);                                //   ERROR_GEN_FAILURE if the API left no code
+        _a.Label(have);
+        _a.St(R10, BlkIoErr, RAX); _a.PopR(RAX); _a.Ret();
+
+        _a.Label("io_err_neg");                  // ioerr = -rax (a syscall's -errno)
+        _a.PushR(RAX); _a.Db(0x48, 0xf7, 0xd8);  // neg rax
+        EmitLoadBlockR10(); _a.St(R10, BlkIoErr, RAX); _a.PopR(RAX); _a.Ret();
+    }
+
+    // rax = result of a Windows call that reports failure as a negative value
+    // (SOCKET_ERROR / INVALID_SOCKET): record the outcome, keep rax.
+    void IoCheckWin() {
+        string err = NewLabel("iow_err"), done = NewLabel("iow_done");
+        _a.TestRR(RAX, RAX); _a.Jcc(0x8, err);   // js
+        _a.CallRel("io_ok"); _a.JmpRel(done);
+        _a.Label(err); _a.CallRel("io_err_win");
+        _a.Label(done);
+    }
+
+    // rax = raw syscall result (-errno on failure): record the outcome; failure becomes -1.
+    void IoCheckSys() {
+        string err = NewLabel("ios_err"), done = NewLabel("ios_done");
+        _a.TestRR(RAX, RAX); _a.Jcc(0x8, err);   // js
+        _a.CallRel("io_ok"); _a.JmpRel(done);
+        _a.Label(err); _a.CallRel("io_err_neg"); _a.MovRI(RAX, -1);
+        _a.Label(done);
+    }
+
+    void Movsxd() => _a.Db(0x48, 0x63, 0xc0);    // movsxd rax, eax  (Win32 int results: -1 must stay negative)
 
     // copy r14 bytes from [rsi] to [rcx], advancing both; ends with rcx past the copy
     void EmitCopyLoop(string tag) {
@@ -2557,7 +2643,8 @@ sealed partial class CodeGen {
         _a.Db(0x55,0x48,0x89,0xe5);                   // push rbp; mov rbp,rsp
         _a.AndRspImm8(-16);
         _a.Db(0x48,0x89,0xf9);                        // mov rcx, rdi
-        _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("closesocket"); 
+        _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("closesocket");
+        Movsxd(); IoCheckWin();                       // 0, or SOCKET_ERROR (-1)
         _a.Db(0x48,0x89,0xec); _a.Db(0x5d);           // mov rsp,rbp ; pop rbp
         _a.Ret();
 
@@ -2574,6 +2661,7 @@ sealed partial class CodeGen {
         _a.Db(0x49,0x89,0xc0);                        // mov r8, rax (len)
         _a.Db(0x4d,0x31,0xc9);                        // xor r9, r9 (flags)
         _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("send"); _a.Db(0x48,0x83,0xc4,0x20); // send
+        Movsxd(); IoCheckWin();                       // bytes sent, or SOCKET_ERROR (-1)
         _a.Db(0x48,0x8d,0x65,0xf0);                   // lea rsp, [rbp-16]
         _a.Db(0x41,0x5c,0x5b);                        // pop r12, rbx
         _a.Db(0x5d);                                  // pop rbp
@@ -2592,10 +2680,16 @@ sealed partial class CodeGen {
         _a.Db(0x4c,0x89,0xea);                        // mov rdx, r13 (buf)
         _a.Db(0x4d,0x89,0xe0);                        // mov r8, r12 (max)
         _a.Db(0x4d,0x31,0xc9);                        // xor r9, r9 (flags)
-        _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("recv"); _a.Db(0x48,0x83,0xc4,0x20); // recv -> rax = n
-        string wrn = NewLabel("wrn");
-        _a.Db(0x48,0x85,0xc0); _a.Db(0x0f,0x89); _a.Rel32To(wrn);  // jns
-        _a.Db(0x48,0x31,0xc0);                        // n<0 -> 0
+        _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("recv"); _a.Db(0x48,0x83,0xc4,0x20); // recv -> eax = n
+        // recv returns a 32-bit int: sign-extend, or SOCKET_ERROR (0xFFFFFFFF) would
+        // look like a 4 GB read and the terminator would land 4 GB past the buffer.
+        Movsxd();
+        string wrn = NewLabel("wrn"), rerr = NewLabel("wr_err");
+        _a.TestRR(RAX, RAX); _a.Jcc(0x8, rerr);       // js: error
+        _a.CallRel("io_ok"); _a.JmpRel(wrn);          // n >= 0 (0 = the peer closed the connection)
+        _a.Label(rerr);
+        _a.CallRel("io_err_win");
+        _a.Db(0x48,0x31,0xc0);                        // error -> "" (ioerr says why)
         _a.Label(wrn);
         _a.Db(0x41,0xc6,0x44,0x05,0x00,0x00);         // mov byte [r13+rax], 0
         _a.Db(0x4c,0x89,0xe8);                        // mov rax, r13
@@ -2653,6 +2747,8 @@ sealed partial class CodeGen {
         _a.Db(0x4d,0x31,0xc0);                        // xor r8,r8
         _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("socket"); _a.Db(0x48,0x83,0xc4,0x20); // socket
         _a.Db(0x48,0x89,0xc3);                        // mov rbx, fd
+        string csfail = NewLabel("csfail");
+        _a.AluRI(7, RAX, -1); _a.Jcc(0x4, csfail);    // INVALID_SOCKET
         // build sockaddr_in on stack (16 bytes, keep 16-aligned)
         _a.Db(0x48,0x83,0xec,0x10);                   // sub rsp,16
         _a.Db(0x48,0x89,0xe7);                        // mov rdi, rsp (dest)
@@ -2672,11 +2768,17 @@ sealed partial class CodeGen {
         _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("connect"); _a.Db(0x48,0x83,0xc4,0x20); // connect
         _a.Db(0x85,0xc0); _a.JnzRel(cfail);           // SOCKET_ERROR -> -1
         _a.Db(0x48,0x89,0xd8);                        // mov rax, rbx (return fd)
+        _a.CallRel("io_ok");
         _a.JmpRel(cdone);
         _a.Label(cfail);
+        _a.CallRel("io_err_win");                     // before closesocket can change the error code
         _a.Db(0x48,0x89,0xd9);                        // mov rcx, rbx (fd)
         _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("closesocket"); _a.Db(0x48,0x83,0xc4,0x20); // closesocket
         _a.Db(0x48,0xc7,0xc0,0xff,0xff,0xff,0xff);    // mov rax, -1
+        _a.JmpRel(cdone);
+        _a.Label(csfail);                             // socket() itself failed: nothing to close
+        _a.CallRel("io_err_win");
+        _a.MovRI(RAX, -1);
         _a.Label(cdone);
         _a.Db(0x48,0x89,0xec);                        // mov rsp, rbp
         _a.Db(0x41,0x5d,0x41,0x5c,0x5b,0x5d);         // pop r13,r12,rbx,rbp
@@ -2694,6 +2796,8 @@ sealed partial class CodeGen {
         _a.Db(0x4d,0x31,0xc0);                        //   0)
         _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("socket"); _a.Db(0x48,0x83,0xc4,0x20);
         _a.Db(0x48,0x89,0xc3);                        // mov rbx, fd
+        string lsfail = NewLabel("lsfail"), lfail = NewLabel("lfail"), ldone = NewLabel("ldone");
+        _a.AluRI(7, RAX, -1); _a.Jcc(0x4, lsfail);    // INVALID_SOCKET
         // bind sockaddr_in {AF_INET, port, INADDR_ANY}
         _a.Db(0x48,0x83,0xec,0x10);                   // sub rsp,16
         _a.Db(0x48,0x89,0xe7);                        // mov rdi, rsp
@@ -2704,11 +2808,24 @@ sealed partial class CodeGen {
         _a.Db(0x48,0x89,0xe2);                        // mov rdx, rsp (&addr)
         _a.Db(0x49,0xc7,0xc0,16,0,0,0);               // mov r8, 16
         _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("bind"); _a.Db(0x48,0x83,0xc4,0x20); // bind
+        _a.Db(0x85,0xc0); _a.JnzRel(lfail);           // e.g. the port is already in use
         // listen(fd, 512): a deep backlog so concurrent clients aren't refused
         _a.Db(0x48,0x89,0xd9);                        // mov rcx, rbx
         _a.Db(0x48,0xc7,0xc2,0x00,0x02,0,0);          // mov rdx, 512
         _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("listen"); _a.Db(0x48,0x83,0xc4,0x20); // listen
+        _a.Db(0x85,0xc0); _a.JnzRel(lfail);
         _a.Db(0x48,0x89,0xd8);                        // mov rax, rbx
+        _a.CallRel("io_ok");
+        _a.JmpRel(ldone);
+        _a.Label(lfail);
+        _a.CallRel("io_err_win");
+        _a.Db(0x48,0x89,0xd9);                        // mov rcx, rbx
+        _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("closesocket"); _a.Db(0x48,0x83,0xc4,0x20);
+        _a.MovRI(RAX, -1); _a.JmpRel(ldone);
+        _a.Label(lsfail);
+        _a.CallRel("io_err_win");
+        _a.MovRI(RAX, -1);
+        _a.Label(ldone);
         _a.Db(0x48,0x89,0xec);                        // mov rsp, rbp
         _a.Db(0x41,0x5c,0x5b,0x5d);                   // pop r12,rbx,rbp
         _a.Ret();
@@ -2721,6 +2838,7 @@ sealed partial class CodeGen {
         _a.Db(0x48,0x31,0xd2);                        // xor rdx, rdx
         _a.Db(0x4d,0x31,0xc0);                        // xor r8, r8
         _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("accept"); _a.Db(0x48,0x83,0xc4,0x20); // accept
+        IoCheckWin();                                 // client socket, or INVALID_SOCKET (-1)
         _a.Db(0x48,0x89,0xec); _a.Db(0x5d);           // mov rsp,rbp ; pop rbp
         _a.Ret();
 
@@ -2732,9 +2850,11 @@ sealed partial class CodeGen {
         {
             _a.Label("readfile");
             string fail = NewLabel("rf_fail"), loop = NewLabel("rf_loop"), done = NewLabel("rf_done"), small = NewLabel("rf_small");
+            string rerr = NewLabel("rf_rerr"), szfail = NewLabel("rf_szfail"), empty = NewLabel("rf_empty");
             _a.PushR(RBP); _a.MovRR(RBP, RSP);
             _a.PushR(RBX); _a.PushR(R12); _a.PushR(R13); _a.PushR(R14);
             _a.AndRspImm8(-16); _a.AluRI(5, RSP, 64);
+            _a.CallRel("io_ok");
             _a.MovRR(RCX, RDI); _a.MovRI(RDX, unchecked((int)0x80000000)); _a.Db(0x89, 0xd2);   // edx = GENERIC_READ (zero-extended)
             _a.MovRI(R8, 1); _a.MovRI(R9, 0);
             _a.StImm(RSP, 32, 3); _a.StImm(RSP, 40, 0x80); _a.StImm(RSP, 48, 0);
@@ -2743,6 +2863,7 @@ sealed partial class CodeGen {
             _a.AluRI(7, RAX, -1); _a.Jcc(0x4, fail);                    // INVALID_HANDLE_VALUE
             _a.MovRR(RCX, RBX); _a.Lea(RDX, RSP, 56);
             EmitIatCall("GetFileSizeEx");
+            _a.Db(0x85, 0xc0); _a.Jcc(0x4, szfail);                     // e.g. the path is a directory
             _a.Ld(R12, RSP, 56);                                        // r12 = size
             _a.Lea(RDI, R12, 1); _a.CallRel("alloc"); _a.MovRR(R13, RAX);   // r13 = buffer
             _a.MovRI(R14, 0);                                           // r14 = bytes so far
@@ -2755,17 +2876,25 @@ sealed partial class CodeGen {
             _a.MovRR(RCX, RBX); _a.MovRR(RDX, R13); _a.AluRR(0x01, RDX, R14);
             _a.Lea(R9, RSP, 48); _a.StImm(RSP, 32, 0); _a.StImm(RSP, 48, 0);
             EmitIatCall("ReadFile");
-            _a.Db(0x85, 0xc0); _a.Jcc(0x4, done);                       // failed
+            _a.Db(0x85, 0xc0); _a.Jcc(0x4, rerr);                       // failed
             _a.Db(0x8b, 0x44, 0x24, 0x30);                              // mov eax, [rsp+48] (bytes read)
             _a.TestRR(RAX, RAX); _a.Jcc(0x4, done);
             _a.AluRR(0x01, R14, RAX); _a.JmpRel(loop);
+            _a.Label(rerr);
+            _a.CallRel("io_err_win");                                   // keep what was read; ioerr says it is incomplete
             _a.Label(done);
             _a.MovRR(RAX, R13); _a.AluRR(0x01, RAX, R14); _a.Db(0xc6, 0x00, 0x00);   // terminating 0
             _a.MovRR(RCX, RBX); EmitIatCall("CloseHandle");
             _a.MovRR(RAX, R13);
             string outl = NewLabel("rf_out");
             _a.JmpRel(outl);
+            _a.Label(szfail);
+            _a.CallRel("io_err_win");
+            _a.MovRR(RCX, RBX); EmitIatCall("CloseHandle");
+            _a.JmpRel(empty);
             _a.Label(fail);
+            _a.CallRel("io_err_win");                                   // e.g. 2 = file not found
+            _a.Label(empty);
             _a.MovRI(RDI, 8); _a.CallRel("alloc"); _a.Db(0xc6, 0x00, 0x00);          // ""
             _a.Label(outl);
             _a.Lea(RSP, RBP, -32);
@@ -2773,48 +2902,49 @@ sealed partial class CodeGen {
             _a.Ret();
         }
 
-        // writefile(rdi=path, rsi=data) -> bytes written
-        _a.Label("writefile");
-        _a.Db(0x53,0x55,0x41,0x54);                   // push rbx,rbp,r12
-        _a.Db(0x49,0x89,0xf4);                        // mov r12, data
-        // CreateFileA(path, GENERIC_WRITE=0x40000000, 0, NULL, CREATE_ALWAYS=2, 0x80, NULL)
-        _a.Db(0x48,0x89,0xf9);                        // mov rcx, path
-        _a.Db(0xba,0x00,0x00,0x00,0x40);              // mov edx, 0x40000000 (GENERIC_WRITE)
-        _a.Db(0x4d,0x31,0xc0);                        // xor r8, r8 (no share)
-        _a.Db(0x4d,0x31,0xc9);                        // xor r9, r9
-        _a.Db(0x48,0x83,0xec,0x40);
-        _a.Db(0x48,0xc7,0x44,0x24,0x20,2,0,0,0);      // [rsp+32]=CREATE_ALWAYS(2)
-        _a.Db(0x48,0xc7,0x44,0x24,0x28,0x80,0,0,0);   // [rsp+40]=NORMAL
-        _a.Db(0x48,0xc7,0x44,0x24,0x30,0,0,0,0);      // [rsp+48]=NULL
-        EmitIatCall("CreateFileA");                               // CreateFileA
-        _a.Db(0x48,0x83,0xc4,0x40);
-        _a.Db(0x48,0x89,0xc3);                        // mov rbx, handle
-        // len = strlen(data)
-        _a.Db(0x4c,0x89,0xe7); _a.CallRel("strlen");  // rax = len
-        _a.Db(0x49,0x89,0xc0);                        // mov r8, rax (len) for WriteFile
-        // WriteFile(handle, data, len, &written, NULL)
-        _a.Db(0x48,0x83,0xec,0x40);
-        _a.Db(0x48,0x89,0xd9);                        // mov rcx, rbx (handle)
-        _a.Db(0x4c,0x89,0xe2);                        // mov rdx, r12 (data)
-        // r8 already = len
-        _a.Db(0x4c,0x8d,0x4c,0x24,0x38);              // lea r9, [rsp+0x38] (written)
-        _a.Db(0x48,0xc7,0x44,0x24,0x20,0,0,0,0);      // [rsp+32]=NULL overlapped
-        EmitIatCall("WriteFile");                               // WriteFile
-        _a.Db(0x4c,0x8b,0x64,0x24,0x38);              // mov r12, [rsp+0x38] (written)
-        _a.Db(0x48,0x83,0xc4,0x40);
-        // CloseHandle
-        _a.Db(0x48,0x89,0xd9);                        // mov rcx, rbx
-        _a.Db(0x48,0x83,0xec,0x20); EmitIatCall("CloseHandle"); _a.Db(0x48,0x83,0xc4,0x20);
-        _a.Db(0x4c,0x89,0xe0);                        // mov rax, r12 (written)
-        _a.Db(0x41,0x5c,0x5d,0x5b);                   // pop r12,rbp,rbx
-        _a.Ret();
+        // writefile(rdi=path, rsi=data) -> bytes written, or -1 (ioerr says why)
+        {
+            _a.Label("writefile");
+            string ofail = NewLabel("wf_ofail"), wfail = NewLabel("wf_wfail"), outl = NewLabel("wf_out");
+            _a.PushR(RBP); _a.MovRR(RBP, RSP);
+            _a.PushR(RBX); _a.PushR(R12); _a.PushR(R13);
+            _a.AndRspImm8(-16); _a.AluRI(5, RSP, 64);
+            _a.MovRR(R12, RSI);                                         // r12 = data
+            _a.CallRel("io_ok");
+            // CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
+            _a.MovRR(RCX, RDI); _a.MovRI(RDX, 0x40000000); _a.MovRI(R8, 0); _a.MovRI(R9, 0);
+            _a.StImm(RSP, 32, 2); _a.StImm(RSP, 40, 0x80); _a.StImm(RSP, 48, 0);
+            EmitIatCall("CreateFileA");
+            _a.MovRR(RBX, RAX);
+            _a.AluRI(7, RAX, -1); _a.Jcc(0x4, ofail);                   // INVALID_HANDLE_VALUE
+            _a.MovRR(RDI, R12); _a.CallRel("strlen"); _a.MovRR(R13, RAX);   // r13 = len
+            // WriteFile(handle, data, len, &written, NULL)
+            _a.MovRR(RCX, RBX); _a.MovRR(RDX, R12); _a.MovRR(R8, R13);
+            _a.StImm(RSP, 56, 0); _a.Lea(R9, RSP, 56); _a.StImm(RSP, 32, 0);
+            EmitIatCall("WriteFile");
+            _a.Db(0x85, 0xc0); _a.Jcc(0x4, wfail);
+            _a.Db(0x44, 0x8b, 0x64, 0x24, 0x38);                        // mov r12d, [rsp+56] (written)
+            _a.MovRR(RCX, RBX); EmitIatCall("CloseHandle");
+            _a.MovRR(RAX, R12); _a.JmpRel(outl);
+            _a.Label(wfail);                                            // e.g. the disk is full
+            _a.CallRel("io_err_win");
+            _a.MovRR(RCX, RBX); EmitIatCall("CloseHandle");
+            _a.MovRI(RAX, -1); _a.JmpRel(outl);
+            _a.Label(ofail);                                            // e.g. 3 = path not found, 5 = access denied
+            _a.CallRel("io_err_win");
+            _a.MovRI(RAX, -1);
+            _a.Label(outl);
+            _a.Lea(RSP, RBP, -24);
+            _a.PopR(R13); _a.PopR(R12); _a.PopR(RBX); _a.PopR(RBP);
+            _a.Ret();
+        }
     }
 
     void EmitSyscallRuntime() {
-        // sock_close(rdi=fd) -> rax
+        // sock_close(rdi=fd) -> 0, or -1 (ioerr = errno)
         _a.Label("sock_close");
         _a.Db(0x48,0xc7,0xc0,3,0,0,0);               // mov rax, 3 (close)
-        _a.Syscall(); _a.Ret();
+        _a.Syscall(); IoCheckSys(); _a.Ret();
 
         // sock_send(rdi=fd, rsi=str) -> rax = bytes written;  write(fd, buf, strlen(buf))
         _a.Label("sock_send");
@@ -2828,6 +2958,7 @@ sealed partial class CodeGen {
         _a.Db(0x48,0x89,0xdf);                       // mov rdi, rbx (fd)
         _a.Db(0x48,0xc7,0xc0,1,0,0,0);               // mov rax, 1 (write)
         _a.Syscall();
+        IoCheckSys();                                // bytes written, or -1
         _a.Db(0x5d,0x5b);                            // pop rbp, rbx
         _a.Ret();
 
@@ -2842,11 +2973,13 @@ sealed partial class CodeGen {
         _a.Db(0x48,0x89,0xee);                       // mov rsi, rbp (buf)
         _a.Db(0x4c,0x89,0xe2);                       // mov rdx, r12 (max)
         _a.Db(0x48,0x31,0xc0);                       // xor rax, rax (read = 0)
-        _a.Syscall();                                 // rax = n read (>=0) or <0
-        string rn=NewLabel("rn");
-        _a.Db(0x48,0x85,0xc0);                       // test rax,rax
-        _a.Db(0x0f,0x89); _a.Rel32To(rn);            // jns rn
-        _a.Db(0x48,0x31,0xc0);                       // xor rax,rax
+        _a.Syscall();                                 // rax = n read (>=0) or -errno
+        string rn = NewLabel("rn"), rerr = NewLabel("rn_err");
+        _a.TestRR(RAX, RAX); _a.Jcc(0x8, rerr);      // js
+        _a.CallRel("io_ok"); _a.JmpRel(rn);          // n >= 0 (0 = the peer closed the connection)
+        _a.Label(rerr);
+        _a.CallRel("io_err_neg");
+        _a.Db(0x48,0x31,0xc0);                       // error -> "" (ioerr says why)
         _a.Label(rn);
         _a.Db(0xc6,0x44,0x05,0x00,0x00);             // mov byte [rbp+rax], 0
         _a.Db(0x48,0x89,0xe8);                       // mov rax, rbp (string)
@@ -2865,16 +2998,17 @@ sealed partial class CodeGen {
         _a.Db(0x48,0xc7,0xc0,41,0,0,0);              // mov rax,41 (socket)
         _a.Syscall();
         _a.Db(0x48,0x89,0xc3);                       // mov rbx, rax (fd)
+        string lfail = NewLabel("lcfail"), ldone = NewLabel("lcdone"), lhost = NewLabel("lchost"), lsfail = NewLabel("lcsfail");
+        _a.TestRR(RAX, RAX); _a.Jcc(0x8, lsfail);    // socket failed
         _a.Db(0x48,0x83,0xec,0x10);                  // sub rsp, 16  (sockaddr_in)
         _a.Db(0x66,0xc7,0x04,0x24,2,0);              // word [rsp]=2 (AF_INET)
         _a.Db(0x4c,0x89,0xe8);                       // mov rax, r13 (port)
         _a.Db(0x88,0x44,0x24,0x03);                  // [rsp+3]=al  (port low, BE)
         _a.Db(0x48,0xc1,0xe8,0x08);                  // shr rax, 8
         _a.Db(0x88,0x44,0x24,0x02);                  // [rsp+2]=al  (port high)
-        string lfail = NewLabel("lcfail"), ldone = NewLabel("lcdone");
         _a.Db(0x4c,0x89,0xe7);                       // mov rdi, r12 (host)
         _a.CallRel("is_ip");                         // no DNS on Linux (no libc): names fail
-        _a.Db(0x48,0x85,0xc0); _a.JzRel(lfail);
+        _a.Db(0x48,0x85,0xc0); _a.JzRel(lhost);
         _a.Db(0x4c,0x89,0xe7);                       // mov rdi, r12 (host)
         _a.Db(0x48,0x8d,0x74,0x24,0x04);             // lea rsi, [rsp+4]
         _a.CallRel("parse_ip");
@@ -2886,12 +3020,20 @@ sealed partial class CodeGen {
         _a.Syscall();
         _a.Db(0x48,0x85,0xc0); _a.JnzRel(lfail);     // connect error -> -1
         _a.Db(0x48,0x89,0xd8);                       // mov rax, rbx (return fd)
+        _a.CallRel("io_ok");
         _a.JmpRel(ldone);
-        _a.Label(lfail);
+        _a.Label(lhost);                             // a host name (no DNS without libc) or a bad IP
+        _a.MovRI(RAX, -22);                          // EINVAL
+        _a.Label(lfail);                             // rax = -errno
+        _a.CallRel("io_err_neg");
         _a.Db(0x48,0x89,0xdf);                       // mov rdi, rbx (fd)
         _a.Db(0x48,0xc7,0xc0,3,0,0,0);               // mov rax,3 (close)
         _a.Syscall();
         _a.Db(0x48,0xc7,0xc0,0xff,0xff,0xff,0xff);   // mov rax, -1
+        _a.JmpRel(ldone);
+        _a.Label(lsfail);                            // socket() failed: nothing to close
+        _a.CallRel("io_err_neg");
+        _a.MovRI(RAX, -1);
         _a.Label(ldone);
         _a.Db(0x48,0x89,0xec);                       // mov rsp, rbp
         _a.Db(0x41,0x5d,0x41,0x5c,0x5b,0x5d);        // pop r13,r12,rbx,rbp
@@ -2909,13 +3051,18 @@ sealed partial class CodeGen {
         _a.Db(0x48,0x31,0xd2);                       //   0)
         _a.Db(0x48,0xc7,0xc0,41,0,0,0);              // mov rax,41
         _a.Syscall(); _a.Db(0x48,0x89,0xc3);         // mov rbx, fd
+        string tlfail = NewLabel("tlfail"), tlsfail = NewLabel("tlsfail"), tldone = NewLabel("tldone");
+        _a.TestRR(RAX, RAX); _a.Jcc(0x8, tlsfail);   // socket failed
         _a.Db(0x48,0x83,0xec,0x10);                  // sub rsp,16
         _a.Db(0xc7,0x04,0x24,1,0,0,0);               // dword [rsp]=1
         _a.Db(0x48,0x89,0xdf);                       // mov rdi, rbx
         _a.Db(0x48,0xc7,0xc6,1,0,0,0);               // mov rsi, 1 (SOL_SOCKET)
         _a.Db(0x48,0xc7,0xc2,2,0,0,0);               // mov rdx, 2 (SO_REUSEADDR)
-        _a.Db(0x49,0x89,0xe0);                       // mov r8, rsp
-        _a.Db(0x49,0xc7,0xc1,4,0,0,0);               // mov r9, 4
+        // syscall arguments are rdi, rsi, rdx, r10, r8, r9 (r10, not rcx, is the 4th).
+        // This used to pass optval/optlen in r8/r9, so SO_REUSEADDR was never set and a
+        // restarted server could not bind its port while old connections sat in TIME_WAIT.
+        _a.MovRR(R10, RSP);                          // optval = &1
+        _a.MovRI(R8, 4);                             // optlen
         _a.Db(0x48,0xc7,0xc0,54,0,0,0);              // mov rax,54 (setsockopt)
         _a.Syscall();
         _a.Db(0x48,0x83,0xc4,0x10);                  // add rsp,16
@@ -2933,11 +3080,23 @@ sealed partial class CodeGen {
         _a.Db(0x48,0xc7,0xc0,49,0,0,0);              // mov rax,49 (bind)
         _a.Syscall();
         _a.Db(0x48,0x83,0xc4,0x10);                  // add rsp,16
+        _a.TestRR(RAX, RAX); _a.Jcc(0x5, tlfail);    // e.g. EADDRINUSE: the port is taken
         _a.Db(0x48,0x89,0xdf);                       // mov rdi, rbx
         _a.Db(0x48,0xc7,0xc6,0x00,0x02,0,0);         // mov rsi,512 (backlog)
         _a.Db(0x48,0xc7,0xc0,50,0,0,0);              // mov rax,50 (listen)
         _a.Syscall();
+        _a.TestRR(RAX, RAX); _a.Jcc(0x5, tlfail);
         _a.Db(0x48,0x89,0xd8);                       // mov rax, rbx (server fd)
+        _a.CallRel("io_ok");
+        _a.JmpRel(tldone);
+        _a.Label(tlfail);                            // rax = -errno
+        _a.CallRel("io_err_neg");
+        _a.MovRR(RDI, RBX); _a.MovRI(RAX, 3); _a.Syscall();   // close
+        _a.MovRI(RAX, -1); _a.JmpRel(tldone);
+        _a.Label(tlsfail);
+        _a.CallRel("io_err_neg");
+        _a.MovRI(RAX, -1);
+        _a.Label(tldone);
         _a.Db(0x48,0x89,0xec);                       // mov rsp, rbp
         _a.Db(0x41,0x5c,0x5b,0x5d);                  // pop r12,rbx,rbp
         _a.Ret();
@@ -2947,16 +3106,18 @@ sealed partial class CodeGen {
         _a.Db(0x48,0x31,0xf6);                       // xor rsi, rsi (NULL)
         _a.Db(0x48,0x31,0xd2);                       // xor rdx, rdx (NULL)
         _a.Db(0x48,0xc7,0xc0,43,0,0,0);              // mov rax,43 (accept)
-        _a.Syscall(); _a.Ret();
+        _a.Syscall(); IoCheckSys(); _a.Ret();
 
         // readfile(rdi=path) -> the whole file as a string ("" if it cannot be opened).
         // open, fstat for the size (files that report 0, like /proc, read up to 1 MB), read until done.
         {
             _a.Label("readfile");
             string fail = NewLabel("rf_fail"), loop = NewLabel("rf_loop"), done = NewLabel("rf_done"), sized = NewLabel("rf_sized");
+            string rfErr = NewLabel("rf_rerr");
             _a.PushR(RBP); _a.MovRR(RBP, RSP);
             _a.PushR(RBX); _a.PushR(R12); _a.PushR(R13); _a.PushR(R14);
             _a.AndRspImm8(-16); _a.AluRI(5, RSP, 160);
+            _a.CallRel("io_ok");
             _a.MovRI(RSI, 0); _a.MovRI(RDX, 0); _a.MovRI(RAX, 2); _a.Syscall();   // open(path, O_RDONLY)
             _a.MovRR(RBX, RAX); _a.TestRR(RAX, RAX); _a.Jcc(0x8, fail);           // js
             _a.MovRR(RDI, RBX); _a.MovRR(RSI, RSP); _a.MovRI(RAX, 5); _a.Syscall(); // fstat
@@ -2971,15 +3132,19 @@ sealed partial class CodeGen {
             _a.MovRR(RDI, RBX); _a.MovRR(RSI, R13); _a.AluRR(0x01, RSI, R14);
             _a.MovRR(RDX, R12); _a.AluRR(0x29, RDX, R14);
             _a.MovRI(RAX, 0); _a.Syscall();                                        // read
-            _a.TestRR(RAX, RAX); _a.Jcc(0xe, done);                                // jle: end or error
+            _a.TestRR(RAX, RAX); _a.Jcc(0x8, rfErr);                                // js: error (e.g. EISDIR)
+            _a.Jcc(0x4, done);                                                     // jz: end of file
             _a.AluRR(0x01, R14, RAX); _a.JmpRel(loop);
+            _a.Label(rfErr);
+            _a.CallRel("io_err_neg");                                              // keep what was read; ioerr says it is incomplete
             _a.Label(done);
             _a.MovRR(RAX, R13); _a.AluRR(0x01, RAX, R14); _a.Db(0xc6, 0x00, 0x00);
             _a.MovRR(RDI, RBX); _a.MovRI(RAX, 3); _a.Syscall();                    // close
             _a.MovRR(RAX, R13);
             string outl = NewLabel("rf_out");
             _a.JmpRel(outl);
-            _a.Label(fail);
+            _a.Label(fail);                                                        // rax = -errno (e.g. ENOENT)
+            _a.CallRel("io_err_neg");
             _a.MovRI(RDI, 8); _a.CallRel("alloc"); _a.Db(0xc6, 0x00, 0x00);
             _a.Label(outl);
             _a.Lea(RSP, RBP, -32);
@@ -2987,25 +3152,40 @@ sealed partial class CodeGen {
             _a.Ret();
         }
 
-        // writefile(rdi=path, rsi=data) -> rax = bytes written
-        _a.Label("writefile");
-        _a.Db(0x55,0x53,0x41,0x54);                  // push rbp,rbx,r12
-        _a.Db(0x49,0x89,0xf4);                       // mov r12, rsi (data)
-        _a.Db(0x48,0xc7,0xc6,0x41,0x02,0,0);         // mov rsi, 0x241 (O_WRONLY|O_CREAT|O_TRUNC)
-        _a.Db(0x48,0xc7,0xc2,0xa4,0x01,0,0);         // mov rdx, 0x1a4 (0644)
-        _a.Db(0x48,0xc7,0xc0,2,0,0,0);               // mov rax,2 (open)
-        _a.Syscall(); _a.Db(0x48,0x89,0xc3);         // mov rbx, fd
-        _a.Db(0x4c,0x89,0xe7);                       // mov rdi, r12
-        _a.CallRel("strlen"); _a.Db(0x48,0x89,0xc2); // mov rdx, rax (len)
-        _a.Db(0x48,0x89,0xdf);                       // mov rdi, rbx (fd)
-        _a.Db(0x4c,0x89,0xe6);                       // mov rsi, r12 (data)
-        _a.Db(0x48,0xc7,0xc0,1,0,0,0);               // mov rax,1 (write)
-        _a.Syscall();
-        _a.Db(0x50);                                  // push rax (count)
-        _a.Db(0x48,0x89,0xdf); _a.Db(0x48,0xc7,0xc0,3,0,0,0); _a.Syscall(); // close
-        _a.Db(0x58);                                  // pop rax
-        _a.Db(0x41,0x5c,0x5b,0x5d);                  // pop r12,rbx,rbp
-        _a.Ret();
+        // writefile(rdi=path, rsi=data) -> rax = bytes written, or -1 (ioerr = errno)
+        {
+            _a.Label("writefile");
+            string ofail = NewLabel("wf_ofail"), wfail = NewLabel("wf_wfail"), outl = NewLabel("wf_out");
+            _a.Db(0x55,0x53,0x41,0x54);                  // push rbp,rbx,r12
+            _a.Db(0x49,0x89,0xf4);                       // mov r12, rsi (data)
+            _a.CallRel("io_ok");
+            _a.Db(0x48,0xc7,0xc6,0x41,0x02,0,0);         // mov rsi, 0x241 (O_WRONLY|O_CREAT|O_TRUNC)
+            _a.Db(0x48,0xc7,0xc2,0xa4,0x01,0,0);         // mov rdx, 0x1a4 (0644)
+            _a.Db(0x48,0xc7,0xc0,2,0,0,0);               // mov rax,2 (open)
+            _a.Syscall(); _a.Db(0x48,0x89,0xc3);         // mov rbx, fd
+            _a.TestRR(RAX, RAX); _a.Jcc(0x8, ofail);     // e.g. ENOENT, EACCES
+            _a.Db(0x4c,0x89,0xe7);                       // mov rdi, r12
+            _a.CallRel("strlen"); _a.Db(0x48,0x89,0xc2); // mov rdx, rax (len)
+            _a.Db(0x48,0x89,0xdf);                       // mov rdi, rbx (fd)
+            _a.Db(0x4c,0x89,0xe6);                       // mov rsi, r12 (data)
+            _a.Db(0x48,0xc7,0xc0,1,0,0,0);               // mov rax,1 (write)
+            _a.Syscall();
+            _a.TestRR(RAX, RAX); _a.Jcc(0x8, wfail);     // e.g. ENOSPC
+            _a.Db(0x50);                                  // push rax (count)
+            _a.Db(0x48,0x89,0xdf); _a.Db(0x48,0xc7,0xc0,3,0,0,0); _a.Syscall(); // close
+            _a.Db(0x58);                                  // pop rax
+            _a.JmpRel(outl);
+            _a.Label(wfail);
+            _a.CallRel("io_err_neg");
+            _a.Db(0x48,0x89,0xdf); _a.Db(0x48,0xc7,0xc0,3,0,0,0); _a.Syscall(); // close
+            _a.MovRI(RAX, -1); _a.JmpRel(outl);
+            _a.Label(ofail);
+            _a.CallRel("io_err_neg");
+            _a.MovRI(RAX, -1);
+            _a.Label(outl);
+            _a.Db(0x41,0x5c,0x5b,0x5d);                  // pop r12,rbx,rbp
+            _a.Ret();
+        }
     }
 
     // emit: mov rax, [IAT slot for import i]; call rax

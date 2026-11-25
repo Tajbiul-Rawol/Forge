@@ -1,0 +1,94 @@
+module io_errors;
+
+// Runtime I/O errors. Every I/O builtin records its outcome: ioerr() is 0 after a
+// call that worked, and the OS error code (GetLastError on Windows, errno on Linux)
+// after one that failed. `try` turns a failed I/O builtin into an IOError.
+// Codes differ between operating systems, so this prints whether ioerr() is set.
+
+// propagate: a bare try returns the IOError to our caller
+string Load(string path) throws IOError {
+    string text = try readfile(path);
+    return "loaded " + text;
+}
+
+int Failed() { if (ioerr() != 0) { return 1; } return 0; }
+
+// connects back to the server in Main, says ping, and hangs up
+int Client(int port) {
+    int fd = tcp_connect("127.0.0.1", port);
+    if (fd < 0) { return ioerr(); }
+    send(fd, "ping");
+    closefd(fd);
+    return 0;
+}
+
+// a thread has its own ioerr
+int ReadMissingInThread() {
+    readfile("no_such_file_in_thread.txt");
+    return ioerr();
+}
+
+void Main() {
+    // ---- files
+    string missing = readfile("no_such_file.txt");
+    Console.WriteLine($"missing file: [{missing}] failed={Failed()}");
+
+    int n = writefile("empty.txt", "");
+    string empty = readfile("empty.txt");
+    Console.WriteLine($"empty file: [{empty}] wrote={n} failed={Failed()}");
+
+    n = writefile("data.txt", "hello");
+    Console.WriteLine($"write: {n} failed={Failed()}");
+    string back = readfile("data.txt");
+    Console.WriteLine($"read: [{back}] failed={Failed()}");
+
+    n = writefile("no_such_dir/x.txt", "data");
+    Console.WriteLine($"write into a missing folder: {n} failed={Failed()}");
+
+    writefile("adir.txt", "");          // reset ioerr, then read a directory
+    string dir = readfile(".");
+    Console.WriteLine($"read a directory: [{dir}] failed={Failed()}");
+
+    // ---- try
+    string a = try readfile("data.txt") else "fallback";
+    string b = try readfile("no_such_file.txt") else "fallback";
+    Console.WriteLine($"try: {a} / {b}");
+    Console.WriteLine(try Load("data.txt") else "load failed");
+    Console.WriteLine(try Load("no_such_file.txt") else "load failed");
+    int bad = try writefile("no_such_dir/y.txt", "x") else -7;
+    Console.WriteLine($"try writefile: {bad}");
+
+    // ---- sockets
+    int port = 47391;
+    int srv = tcp_listen(port);
+    Console.WriteLine($"listen: ok={srv >= 0} failed={Failed()}");
+    int again = tcp_listen(port);       // the port is taken now
+    Console.WriteLine($"listen again: {again} failed={Failed()}");
+    int fd2 = try tcp_listen(port) else -9;
+    Console.WriteLine($"try listen again: {fd2}");
+    Console.WriteLine($"close: {closefd(srv)} failed={Failed()}");
+    Console.WriteLine($"close again: {closefd(srv)} failed={Failed()}");
+    int sent = send(srv, "x");
+    Console.WriteLine($"send on a closed socket: {sent} failed={Failed()}");
+    string got = recv(srv, 16);
+    Console.WriteLine($"recv on a closed socket: [{got}] failed={Failed()}");
+    Console.WriteLine($"accept on a closed socket: {accept(srv)} failed={Failed()}");
+
+    // ---- a real connection: data, then an orderly close (not an error)
+    int srv2 = tcp_listen(47393);
+    long ch = spawn Client(47393);
+    int conn = accept(srv2);
+    Console.WriteLine($"accept: ok={conn >= 0} failed={Failed()}");
+    string msg = recv(conn, 16);
+    Console.WriteLine($"recv: [{msg}] failed={Failed()}");
+    string after = recv(conn, 16);
+    Console.WriteLine($"recv after the peer closed: [{after}] failed={Failed()}");
+    Console.WriteLine($"client result: {join(ch)}");
+    closefd(conn); closefd(srv2);
+
+    // ---- per thread
+    readfile("data.txt");
+    long h = spawn ReadMissingInThread();
+    long threadErr = join(h);
+    Console.WriteLine($"thread saw an error: {threadErr != 0}; main still ok: {ioerr() == 0}");
+}

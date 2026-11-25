@@ -1,0 +1,5 @@
+io_try_misuse.fg:5: error: 'strlen' cannot fail - remove 'try'
+io_try_misuse.fg:6: error: a bare 'try' propagates - the enclosing function must declare 'throws'
+io_try_misuse.fg:7: error: 'else' fallback must be string
+io_try_misuse.fg: 3 errors.
+exit: 1

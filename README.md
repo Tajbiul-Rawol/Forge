@@ -677,6 +677,40 @@ int srv = tcp_listen(8080);                 // server
 int cli = accept(srv);
 ```
 
+### When I/O fails
+
+Every I/O builtin (`readfile`, `writefile`, `tcp_connect`, `tcp_listen`, `accept`,
+`send`, `recv`, `closefd`) records its outcome. `ioerr()` returns 0 after a call
+that worked, and the operating system's error code after one that failed:
+`GetLastError()`/`WSAGetLastError()` values on Windows, `errno` on Linux. Each
+thread has its own `ioerr()`.
+
+| Builtin | On failure |
+|---------|------------|
+| `readfile` | `""` (an empty file also gives `""` but leaves `ioerr()` at 0). A read error part-way returns what was read, with `ioerr()` set |
+| `writefile`, `tcp_connect`, `tcp_listen`, `accept`, `send`, `closefd` | `-1` |
+| `recv` | `""`. When the other side closes the connection, `recv` also returns `""`, but `ioerr()` stays 0 |
+
+```csharp
+string text = readfile(path);
+if (ioerr() != 0) { Console.WriteLine($"cannot read {path}: error {ioerr()}"); }
+```
+
+`try` works on these builtins as it does on a `throws` function: on failure you get
+the `else` value, or a bare `try` passes an `IOError` to the caller.
+
+```csharp
+string config = try readfile("app.conf") else "defaults";
+int srv = try tcp_listen(8080) else -1;
+
+string Load(string path) throws IOError {
+    return try readfile(path);          // the caller decides what to do
+}
+```
+
+Common codes: file not found is 2 on both systems; a port already in use is 10048
+(Windows) / 98 (Linux). See `examples/io_errors.fg`.
+
 ### Example: an HTTP server in Forge (`examples/http_server.fg`)
 
 ```

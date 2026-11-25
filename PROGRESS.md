@@ -107,6 +107,17 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
 
+### Session: runtime I/O errors (2026-11-25)
+- `ioerr()` builtin: per-thread error code of the last I/O builtin, stored at arena block +48 (`BlkIoErr`, zeroed for each thread). Set by `io_ok` / `io_err_win` (TEB LastErrorValue, gs:[0x68]) / `io_err_neg` (-rax from a syscall), emitted in `EmitIoStatus`.
+- All failures now return -1 (or "" for readfile/recv) on both systems; Linux used to return raw -errno from close/send/accept.
+- `try` on I/O builtins (`FallibleBuiltins`, `EmitTryBuiltin`): tests ioerr after the call; propagates an `IOError`.
+- I/O builtins are compile errors on `--target kernel` (they were emitted as Linux syscalls).
+- Bugs fixed on the way:
+  - Windows `recv`/`send`/`closesocket` results are 32-bit: they are now sign-extended. Before, a `recv` error (0xFFFFFFFF) looked like a 4 GB read and wrote the terminator 4 GB past the buffer.
+  - Windows `writefile` never checked `CreateFileA` and returned an uninitialized "bytes written" on failure; `readfile` never checked `GetFileSizeEx`.
+  - `tcp_listen` ignored `bind`/`listen` failures on both systems: a busy port gave a socket that silently listened on a random port.
+  - Linux `setsockopt(SO_REUSEADDR)` passed its 4th/5th arguments in r8/r9 instead of r10/r8, so it always failed; a restarted server could not bind its port while old connections were in TIME_WAIT. (This only became visible once bind failures were reported.)
+
 ---
 
 ## 3. Examples added in these sessions
@@ -155,7 +166,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 - **glibc dynamic linking is untested** (only musl was available). The default `--interp` is `/lib64/ld-linux-x86-64.so.2`.
 - A string literal inside `{...}` of an interpolated string doesn't parse (the lexer ends the string early).
 - Syntax errors stop the compile at the first one (type errors are all reported). Errors have a line but no column.
-- `writefile`/`readfile` fail silently (return 0 / ""), with no error a program can test for.
+- `ioerr()` gives the OS error code, not a portable one: compare codes per OS, or just test `!= 0`. `try` on a builtin cannot tell you the code either (use `ioerr()` after it). `tcp_connect` on Linux takes IP addresses only (no DNS without libc); a host name fails with EINVAL (22).
 - Interrupt handlers must not allocate while interrupting code that also allocates (the allocator isn't reentrant).
 - C callbacks must run on the main thread or a Forge thread (they need Forge's thread pointer).
 - On Linux, call `fflush(null)` before exiting if you used `printf` (Forge exits with `exit_group`).
@@ -168,7 +179,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 1. Install QEMU and boot-test `kernel_os.fg` (interrupts, keyboard, paging, shell). Fix what breaks.
 2. Commit the regression tests (see section 5).
-3. Language: `double` arithmetic, generics. (`+=`/`++`, `break`/`continue` and `switch` are done.)
+3. Language: `double` arithmetic, generics. (`+=`/`++`, `break`/`continue`, `switch` and runtime I/O errors are done.)
 4. Allow string literals inside interpolation holes.
 5. Bare metal: a GDT/TSS helper example, APIC timer, framebuffer output, a bootable ISO (GRUB) for real hardware.
 6. Performance: more loop optimizations (moving invariant arithmetic out of loops, strength reduction), fewer redundant moves, unrolling. JSON is still 1.4x behind C.
