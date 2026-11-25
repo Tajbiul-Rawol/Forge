@@ -1,0 +1,24 @@
+missing file: [] failed=1
+empty file: [] wrote=0 failed=0
+write: 5 failed=0
+read: [hello] failed=0
+write into a missing folder: -1 failed=1
+read a directory: [] failed=1
+try: hello / fallback
+loaded hello
+load failed
+try writefile: -7
+listen: ok=1 failed=0
+listen again: -1 failed=1
+try listen again: -9
+close: 0 failed=0
+close again: -1 failed=1
+send on a closed socket: -1 failed=1
+recv on a closed socket: [] failed=1
+accept on a closed socket: -1 failed=1
+accept: ok=1 failed=0
+recv: [ping] failed=0
+recv after the peer closed: [] failed=0
+client result: 0
+thread saw an error: 1; main still ok: 1
+exit: 0

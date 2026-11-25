@@ -158,6 +158,10 @@ if [ ${#ONLY[@]} -eq 0 ]; then
     cli_case "missing source file" 1 "cannot read"                  build does_not_exist.fg
     cli_case "unwritable output"   1 "cannot write"                 build ok.fg -o "$WORK/no/such/dir/x.exe"
     cli_case "valid build"         0 "forgec: wrote"                build ok.fg -o ok.exe
+    printf 'module k;
+void Main() { string s = readfile("x"); }
+' > "$WORK/kio.fg"
+    cli_case "I/O on bare metal"   1 "readfile() needs an OS"       build kio.fg --target kernel
 fi
 
 echo

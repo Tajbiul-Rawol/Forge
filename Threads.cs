@@ -18,7 +18,7 @@ namespace ForgeC;
 //                        [8] result   [16] region size   [24] next (while cached)
 //                        [32] argument   [40] function address
 //   +64   arena block    [0] cur  [8] end  [16] first chunk start  [24] first chunk end
-//                        [32] extra-chunk list  [40] self pointer
+//                        [32] extra-chunk list  [40] self pointer  [48] last I/O error (ioerr)
 //   +128 .. +ArenaChunk  the thread's first arena chunk
 //   Linux only: +ArenaChunk .. +ArenaChunk+ThreadStack is the thread's stack.
 // Extra chunks start with a 16-byte header: [0] next chunk, [8] chunk size.
@@ -31,6 +31,7 @@ namespace ForgeC;
 sealed partial class CodeGen {
     const int RtTlsOff = 4096;           // heapBase+4096: Windows gs-relative offset of our TLS slot
     const int RtMainBlk = 4160;          // heapBase+4160: the main thread's arena block
+    const int BlkIoErr = 48;             // arena block field: error code of the thread's last I/O builtin (0 = ok)
     const int RtCacheLock = 4224;        // heapBase+4224: spin lock guarding the region cache
     const int RtCacheHead = 4232;        // heapBase+4232: first cached (joined, reusable) thread region
     const int RtCacheCount = 4240;       // heapBase+4240: number of cached regions
@@ -205,7 +206,7 @@ sealed partial class CodeGen {
             _a.St(RBX, RtMainBlk + 0, RAX); _a.St(RBX, RtMainBlk + 16, RAX);
             _a.MovRR(RAX, RBX); _a.AluRI(0, RAX, Pe.HeapSize);
             _a.St(RBX, RtMainBlk + 8, RAX); _a.St(RBX, RtMainBlk + 24, RAX);
-            _a.StImm(RBX, RtMainBlk + 32, 0);
+            _a.StImm(RBX, RtMainBlk + 32, 0); _a.StImm(RBX, RtMainBlk + BlkIoErr, 0);
             _a.Lea(RAX, RBX, RtMainBlk); _a.St(RBX, RtMainBlk + 40, RAX);
             if (win) {
                 _a.AluRI(5, RSP, 32);
@@ -247,7 +248,7 @@ sealed partial class CodeGen {
             _a.StImm(RBX, 16, ThreadRegion); _a.St(RBX, 32, R13); _a.St(RBX, 40, R12);
             _a.Lea(RAX, RBX, 128); _a.St(RBX, 64, RAX); _a.St(RBX, 80, RAX);
             _a.MovRR(RAX, RBX); _a.AluRI(0, RAX, ArenaChunk); _a.St(RBX, 72, RAX); _a.St(RBX, 88, RAX);
-            _a.StImm(RBX, 96, 0);
+            _a.StImm(RBX, 96, 0); _a.StImm(RBX, 64 + BlkIoErr, 0);
             _a.Lea(RAX, RBX, 64); _a.St(RBX, 104, RAX);
             if (win) {
                 // CreateThread(NULL, 0, thr_entry, region, 0, NULL)
@@ -510,6 +511,8 @@ sealed partial class CodeGen {
                 _a.CallRel("rt_cpu_count"); return true;
             case "now_ns":
                 _a.CallRel("rt_now_ns"); return true;
+            case "ioerr":                                              // last I/O error of this thread (0 = ok)
+                EmitLoadBlockR10(); _a.Ld(RAX, R10, BlkIoErr); return true;
             case "sleep_ms":
                 EmitExpr(c.Args[0]); _a.MovRR(RDI, RAX); _a.CallRel("rt_sleep_ms"); return true;
         }

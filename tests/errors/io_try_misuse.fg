@@ -1,0 +1,11 @@
+// Misusing try on builtins is reported like any other type error.
+module m;
+
+int Len(string s) {
+    int a = try strlen(s) else 0;
+    string b = try readfile(s);
+    int c = try readfile(s) else 0;
+    return a;
+}
+
+void Main() { Console.WriteLine(Len("x")); }
