@@ -1,0 +1,8 @@
+// A function with a type error does not also get a "must return" error.
+module retpath;
+
+int F(int x) {
+    if (x > 0) { return x + undefinedThing; }
+}
+
+void Main() { Console.WriteLine(F(1)); }

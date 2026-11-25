@@ -87,6 +87,17 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
 5. **Loops.** Rotated loops (condition tested at the bottom); loop-invariant `.length` hoisting (`HoistLengths`).
 6. **Smaller changes.** `$"..."` works as a string value everywhere; arrays and strings can be cast to pointers; `str()` accepts bool and pointers; asm variables count as used in the unused-variable lint.
 
+### Session: regression tests and compiler hardening (2026-11-25)
+- `tests/run.sh` + `tests/manifest.txt` + CI on Windows and Ubuntu (see section 5).
+- **Errors.** `Analyze` collects errors per statement (`Recover`/`Report`, max 20) and drops follow-on errors that mention a local whose declaration failed (`_poisoned`). Errors come out sorted by line via `ForgeErrors`. Parse errors still stop at the first one.
+- **Driver.** The compiler runs on a 256 MB-stack thread. Unexpected exceptions become `internal compiler error` (exit 3, `FORGE_DEBUG=1` prints the trace). Unknown commands, options or targets and missing values give exit 2. Output write failures are reported.
+- **Fuzzer** (`tests/fuzz`) found and fixed:
+  - integer/hex literals too big for 64 bits crashed the lexer;
+  - `TypeOf` was uncached, so long expressions compiled in quadratic time (20,000-term sum: >40 s, now <0.1 s at -O0); it is now cached per node, and all 164 example binaries came out byte-identical;
+  - builtin arguments the builtin didn't check itself (e.g. `substr`'s start/len) reached codegen unchecked; all builtin arguments are now type-checked (`CheckedBuiltins`);
+  - interpolation holes weren't type-checked by `check`, reported line 1, and silently ignored extra tokens (`{a b}`).
+- C# warnings are now errors (`TreatWarningsAsErrors`).
+
 ---
 
 ## 3. Examples added in these sessions
@@ -134,7 +145,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 - **The kernel features have never been booted.** No QEMU on this machine. Encodings were checked with dumpbin, but `kernel_os.fg` is untested at run time. Next step: `winget install qemu`, then `qemu-system-x86_64 -kernel os.elf -serial stdio`.
 - **glibc dynamic linking is untested** (only musl was available). The default `--interp` is `/lib64/ld-linux-x86-64.so.2`.
 - A string literal inside `{...}` of an interpolated string doesn't parse (the lexer ends the string early).
-- `forgec check` stops at the first error (`typos.fg` has two; only `Squre` is reported).
+- Syntax errors stop the compile at the first one (type errors are all reported). Errors have a line but no column.
 - `writefile`/`readfile` fail silently (return 0 / ""), with no error a program can test for.
 - Interrupt handlers must not allocate while interrupting code that also allocates (the allocator isn't reentrant).
 - C callbacks must run on the main thread or a Forge thread (they need Forge's thread pointer).

@@ -158,7 +158,20 @@ tests/run.sh --update hello           # accept new output as the baseline
 ```
 
 Use Git Bash on Windows. `tests/manifest.txt` lists every example and whether it is run,
-only built, or expected to fail `forgec check`. CI runs the suite on Windows and Ubuntu.
+only built, or expected to fail `forgec check`. Each file in `tests/errors/` must fail
+`forgec check` with exactly the diagnostics in `tests/expected/<name>.check`. The suite
+also checks command-line handling (exit codes, no stack traces).
+
+**Fuzzing.** `tests/fuzz` mutates the examples and compiles every variant for all three
+targets at -O2 and -O0. Any outcome other than success or a clean error is a compiler
+bug; the input is saved in `tests/fuzz/crashes/`.
+
+```
+dotnet run -c Release --project tests/fuzz -- 5000 1        # iterations, seed
+dotnet run -c Release --project tests/fuzz -- --time file.fg # time each compiler phase
+```
+
+CI runs the suite on Windows and Ubuntu, plus a 3,000-input fuzz run.
 
 ---
 
@@ -181,6 +194,18 @@ dotnet bin/Release/net10.0/forgec.dll complete <file.fg> <line> <col>
 - `--target win` (default), `--target linux`, or `--target kernel`.
 - `-O0`   — turn the optimizer off (see "Optimizer" below). Useful to compare
   output or speed, or to rule the optimizer out when chasing a bug.
+
+**Errors and exit codes.** Problems are printed as `file:line: error: message`. Type
+errors don't stop at the first one: `forgec` reports every independent error (up to 20)
+and leaves out follow-on errors caused by a declaration that already failed. A syntax
+error still stops the compile at that point.
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Success |
+| 1 | The program has errors, or a file could not be read or written |
+| 2 | Bad command line (unknown command, option or target) |
+| 3 | Internal compiler error: a bug in forgec. Set `FORGE_DEBUG=1` for a stack trace and please report it |
 
 ---
 

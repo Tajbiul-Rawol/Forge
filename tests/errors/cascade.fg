@@ -1,0 +1,12 @@
+// A declaration that fails poisons its variable: uses of it are not reported again.
+module cascade;
+
+int Square(int x) { return x * x; }
+
+void Main() {
+    var a = Squre(2);
+    var b = a + 1;
+    Console.WriteLine(b);
+    a = 5;
+    Console.WriteLine(missing);
+}

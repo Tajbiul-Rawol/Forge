@@ -1,0 +1,6 @@
+cond_and_body.fg:6: error: if condition must be bool
+cond_and_body.fg:7: error: use of undeclared variable 'nope'
+cond_and_body.fg:9: error: while condition must be bool
+cond_and_body.fg:10: error: assignment to 'n' type mismatch
+cond_and_body.fg: 4 errors.
+exit: 1

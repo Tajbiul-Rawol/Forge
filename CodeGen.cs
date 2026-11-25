@@ -27,6 +27,12 @@ sealed partial class CodeGen {
     readonly Asm _a = new();
     readonly Target _target;
     public readonly List<Diagnostic> Warnings = new();
+    // Type errors collected by Analyze (it keeps going after an error, up to MaxErrors).
+    public readonly List<Diagnostic> Errors = new();
+    public const int MaxErrors = 20;
+    // Locals whose declaration failed to type-check: later errors that mention them are
+    // follow-on noise and are not reported.
+    readonly HashSet<string> _poisoned = new();
 
     // relocations into the IAT: (codePosition, importIndex) for `mov rax,[iatSlot]`
     readonly List<(int CodePos, int ImportIdx)> _iatRelocs = new();
@@ -323,7 +329,27 @@ sealed partial class CodeGen {
     static bool Signed(string t) => t is "i8" or "i16" or "i32" or "i64" or "int" or "long";
     static int Log2(int n) => n == 1 ? 0 : n == 2 ? 1 : n == 4 ? 2 : 3;
 
+    // TypeOf is called on the same nodes many times (at every level of a nested
+    // expression), so results are cached per node. The cache is cleared whenever
+    // _locals is rebuilt for another function (SetupLocalsForCheck, EmitFunc).
+    readonly Dictionary<Expr, string> _typeCache = new(ReferenceEqualityComparer.Instance);
+
+    // Builtins type-checked in TypeOf's CallExpr case (async-runtime intrinsics are handled separately).
+    static readonly HashSet<string> CheckedBuiltins = new() {
+        "accept","atomic_add","atomic_cas","atomic_load","atomic_store","atomic_xchg","cli","closefd","cpu_count",
+        "exit","getc","heapbase","heapmark","heapreset","hlt","inb","inl","invlpg","inw","join","lgdt","lidt",
+        "lock","malloc","now_ns","outb","outl","outw","pause","putc","rdmsr","rdtsc","read_cr0","read_cr2",
+        "read_cr3","read_cr4","readfile","recv","send","sleep_ms","sti","str","strlen","substr","tcp_connect",
+        "tcp_listen","toint","unlock","write_cr0","write_cr3","write_cr4","writefile","wrmsr",
+    };
     string TypeOf(Expr e) {
+        if (_typeCache.TryGetValue(e, out var cached)) return cached;
+        var t = TypeOfUncached(e);
+        _typeCache[e] = t;
+        return t;
+    }
+
+    string TypeOfUncached(Expr e) {
         switch (e) {
             case IntLit:  return "int";
             case FloatLit:return "double";
@@ -403,6 +429,9 @@ sealed partial class CodeGen {
                     c.Name = mname;
                 }
                 if (_funcs.ContainsKey(c.Name)) goto userFunc;   // a program's own function shadows a builtin of the same name
+                // Each builtin below checks the arguments it cares about; make sure every
+                // argument type-checks regardless, so none reaches codegen unchecked.
+                if (CheckedBuiltins.Contains(c.Name)) foreach (var a in c.Args) TypeOf(a);
                 if (c.Name == "malloc") {
                     if (c.Args.Count != 1 || !IsInt(TypeOf(c.Args[0])))
                         throw new ForgeException("malloc(n) takes one integer (byte count)", c.Line);
@@ -433,7 +462,7 @@ sealed partial class CodeGen {
                 if (c.Name == "str")     { Need(c, 1); var st0 = TypeOf(c.Args[0]); if (!IsInt(st0) && st0 != "bool" && !IsPtr(st0)) Err(c, "str(n) takes an integer"); return "string"; }
                 if (c.Name == "toint")   { Need(c, 1); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "toint(s) takes a string"); return "int"; }
                 if (c.Name == "strlen")  { Need(c, 1); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "strlen(s) takes a string"); return "int"; }
-                if (c.Name == "substr")  { Need(c, 3); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "substr(s,start,len)"); return "string"; }
+                if (c.Name == "substr")  { Need(c, 3); if (!IsStr(TypeOf(c.Args[0])) || !IsInt(TypeOf(c.Args[1])) || !IsInt(TypeOf(c.Args[2]))) Err(c, "substr(s,start,len)"); return "string"; }
                 if (c.Name == "readfile"){ Need(c, 1); if (!IsStr(TypeOf(c.Args[0]))) Err(c, "readfile(path) takes a string"); return "string"; }
                 if (c.Name == "writefile"){ Need(c, 2); if (!IsStr(TypeOf(c.Args[0])) || !IsStr(TypeOf(c.Args[1]))) Err(c, "writefile(path, contents)"); return "int"; }
                 if (c.Name == "tcp_connect"){ Need(c, 2); if (!IsStr(TypeOf(c.Args[0])) || !IsInt(TypeOf(c.Args[1]))) Err(c, "tcp_connect(host, port)"); return "int"; }
@@ -496,7 +525,11 @@ sealed partial class CodeGen {
                 if (t.Else != null) { var et = TypeOf(t.Else); if (!Assignable(f.Ret, et)) throw new ForgeException($"'else' fallback must be {f.Ret}", t.Line); }
                 return f.Ret;
             }
-            case Interp: return "string";
+            case Interp itp: {
+                foreach (var part in itp.Parts)
+                    if (part is ValueTuple<Expr, string?> hole) TypeOf(hole.Item1);   // holes must type-check too
+                return "string";
+            }
             case NewArray na: {
                 var st = TypeOf(na.Size);
                 if (!IsInt(st)) throw new ForgeException("array size must be an integer", na.Line);
@@ -626,24 +659,57 @@ sealed partial class CodeGen {
     // ----------------------------------------------------------------- entry
     // Type-check and run static analyses (populates Warnings). No code emission.
     public void Analyze() {
-        if (!_funcs.ContainsKey("Main"))
-            throw new ForgeException("no Main function found", 1);
-        var main = _funcs["Main"];
-        if (main.Ret != "void" || main.Params.Count != 0 || main.Throws != null)
-            throw new ForgeException("Main must be: void Main()", main.Line);
+        try {
+            if (!_funcs.ContainsKey("Main")) Report(new ForgeException("no Main function found", 1), null);
+            else {
+                var main = _funcs["Main"];
+                if (main.Ret != "void" || main.Params.Count != 0 || main.Throws != null)
+                    Report(new ForgeException("Main must be: void Main()", main.Line), null);
+            }
 
-        foreach (var f in _mod.Funcs) {
-            if (f.IsAsync && f.Throws != null)
-                throw new ForgeException($"async function '{f.Name}' cannot declare 'throws' (not supported yet)", f.Line);
-            if (f.IsAsync && f.Params.Count > 4)
-                throw new ForgeException($"async function '{f.Name}' can take at most 4 parameters", f.Line);
-            _cur = f; SetupLocalsForCheck(f); f.Body = LowerBody(f.Body); CheckBody(f.Body);
-            CheckAllPathsReturn(f);
-            if (f.IsRuntime) continue;          // compiler-supplied: no lint warnings
-            CheckUnreachable(f.Body);
-            CheckUnusedLocals(f);
-        }
+            foreach (var f in _mod.Funcs) {
+                int before = Errors.Count;
+                _poisoned.Clear();
+                Recover(null, () => {
+                    if (f.IsAsync && f.Throws != null)
+                        throw new ForgeException($"async function '{f.Name}' cannot declare 'throws' (not supported yet)", f.Line);
+                    if (f.IsAsync && f.Params.Count > 4)
+                        throw new ForgeException($"async function '{f.Name}' can take at most 4 parameters", f.Line);
+                });
+                _cur = f;
+                Recover(null, () => SetupLocalsForCheck(f));
+                f.Body = LowerBody(f.Body);
+                CheckBody(f.Body);
+                if (Errors.Count > before) continue;    // return-path check and lints only on clean functions
+                Recover(null, () => CheckAllPathsReturn(f));
+                if (f.IsRuntime) continue;          // compiler-supplied: no lint warnings
+                CheckUnreachable(f.Body);
+                CheckUnusedLocals(f);
+            }
+        } catch (TooManyErrors) { }
+        if (Errors.Count > 0) throw new ForgeErrors(Errors.OrderBy(e => e.Line).ToList());
     }
+
+    // Run one check; a ForgeException becomes a collected error instead of aborting.
+    void Recover(Stmt? at, Action check) {
+        try { check(); }
+        catch (ForgeException fe) { Report(fe, at); }
+    }
+    void Report(ForgeException fe, Stmt? at) {
+        if (at != null && _poisoned.Count > 0 && MentionsPoisoned(at)) return;
+        if (Errors.Any(e => e.Line == fe.Line && e.Message == fe.Message)) return;
+        Errors.Add(new Diagnostic(Severity.Error, fe.Line, fe.Message));
+        if (Errors.Count >= MaxErrors) throw new TooManyErrors();
+    }
+    bool MentionsPoisoned(Stmt s) {
+        bool hit = false;
+        Walker.WalkStmt(s, e => {
+            if (e is VarRef vr && _poisoned.Contains(vr.Name)) hit = true;
+            else if (e is AddrOf ao && _poisoned.Contains(ao.Name)) hit = true;
+        }, st => { if (st is Assign a && _poisoned.Contains(a.Name)) hit = true; });
+        return hit;
+    }
+    sealed class TooManyErrors : Exception { }
 
     public byte[] Compile() {
         Analyze();
@@ -705,14 +771,20 @@ sealed partial class CodeGen {
 
     // pre-scan to assign local slots (so type checking can see declared types)
     void SetupLocalsForCheck(Func f) {
-        _locals = new(); _frame = 0;
+        _locals = new(); _frame = 0; _typeCache.Clear();
         foreach (var (t, n) in f.Params) AddLocal(n, t);
         PrescanDecls(f.Body);
     }
     void PrescanDecls(List<Stmt> body) {
         foreach (var s in body) {
             switch (s) {
-                case VarDecl v: { var t = v.DeclType ?? TypeOf(v.E); AddLocal(v.Name, t); break; }
+                case VarDecl v: {
+                    string t;
+                    try { t = v.DeclType ?? TypeOf(v.E); }
+                    catch (ForgeException) { _poisoned.Add(v.Name); break; }   // reported when the statement is checked
+                    AddLocal(v.Name, t);
+                    break;
+                }
                 case IfStmt i: PrescanDecls(i.Then); if (i.Else != null) PrescanDecls(i.Else); break;
                 case WhileStmt w: PrescanDecls(w.Body); break;
                 case ForStmt f: {
@@ -726,7 +798,8 @@ sealed partial class CodeGen {
     // ---- lowering of struct syntax to plain memory access (runs in Analyze, after the
     // locals' types are known):  obj.f  ->  *(T*)((u8*)obj + offset),  obj.f = v  ->
     // a store through that pointer,  sizeof(T) -> constant,  arr.length -> LengthExpr.
-    List<Stmt> LowerBody(List<Stmt> b) => b.Select(LowerStmt).ToList();
+    // Lowering errors are collected per statement (see Recover), so nested blocks keep going too.
+    List<Stmt> LowerBody(List<Stmt> b) => b.Select(s => { Stmt r = s; Recover(s, () => r = LowerStmt(s)); return r; }).ToList();
     Stmt LowerStmt(Stmt st) {
         switch (st) {
             case MemberAssign ma: {
@@ -819,7 +892,7 @@ sealed partial class CodeGen {
         if (!_locals.ContainsKey(name)) { _frame += 8; _locals[name] = (-_frame, type); }
     }
     void CheckBody(List<Stmt> body) {
-        foreach (var s in body) CheckStmt(s);
+        foreach (var s in body) Recover(s, () => CheckStmt(s));
     }
 
     // --- analysis: does control definitely return/throw before falling off? ---
@@ -928,8 +1001,12 @@ sealed partial class CodeGen {
                 if (!Assignable(Pointee(pt), TypeOf(da.E))) throw new ForgeException("pointer target type mismatch", da.Line);
                 break;
             }
-            case IfStmt i: if (TypeOf(i.Cond) != "bool") throw new ForgeException("if condition must be bool", i.Line); CheckBody(i.Then); if (i.Else != null) CheckBody(i.Else); break;
-            case WhileStmt w: if (TypeOf(w.Cond) != "bool") throw new ForgeException("while condition must be bool", w.Line); CheckBody(w.Body); break;
+            case IfStmt i:
+                Recover(i, () => { if (TypeOf(i.Cond) != "bool") throw new ForgeException("if condition must be bool", i.Line); });
+                CheckBody(i.Then); if (i.Else != null) CheckBody(i.Else); break;
+            case WhileStmt w:
+                Recover(w, () => { if (TypeOf(w.Cond) != "bool") throw new ForgeException("while condition must be bool", w.Line); });
+                CheckBody(w.Body); break;
             case ForStmt f: {
                 if (f.Init != null) CheckStmt(f.Init);
                 if (f.Cond != null && TypeOf(f.Cond) != "bool") throw new ForgeException("for condition must be bool", f.Line);
@@ -1213,7 +1290,7 @@ sealed partial class CodeGen {
 
     void EmitFunc(Func f) {
         _cur = f;
-        _locals = new(); _frame = 0;
+        _locals = new(); _frame = 0; _typeCache.Clear();
         _regOf.Clear(); _addrTaken.Clear(); _savedRegs.Clear(); _saveSlot.Clear(); _frameless = false;
         foreach (var (t, n) in f.Params) AddLocal(n, t);
         foreach (var (t, n) in f.ExtraLocals) AddLocal(n, t);

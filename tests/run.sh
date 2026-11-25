@@ -104,16 +104,27 @@ run_case() {  # name target opt
     fi
 }
 
-check_case() {  # name
-    local name=$1 actual expected
-    ( cd "$ROOT/examples" && "${FORGEC[@]}" check "$name.fg" ) > "$WORK/out" 2>&1
+check_case() {  # name [dir] : `forgec check` must fail with exactly the expected diagnostics
+    local name=$1 dir=${2:-$ROOT/examples} actual expected
+    ( cd "$dir" && "${FORGEC[@]}" check "$name.fg" ) > "$WORK/out" 2>&1
     local rc=$?
     actual="$(norm < "$WORK/out"; echo "exit: $rc")"
     expected="$ROOT/tests/expected/$name.check"
     if [ $UPDATE -eq 1 ]; then printf '%s\n' "$actual" > "$expected"; pass "$name [check] (baseline written)"; return; fi
-    if [ $rc -eq 0 ]; then fail "$name [check]" "expected errors, got exit 0"; return; fi
+    if [ $rc -ne 1 ]; then fail "$name [check]" "expected exit 1 (errors), got $rc"$'\n'"$(head -5 "$WORK/out")"; return; fi
+    if [ ! -f "$expected" ]; then fail "$name [check]" "no baseline: run tests/run.sh --update $name"; return; fi
     if [ "$actual" = "$(norm < "$expected")" ]; then pass "$name [check]"
     else fail "$name [check]" "$(diff <(norm < "$expected") <(printf '%s\n' "$actual") | head -20)"; fi
+}
+
+cli_case() {  # label expected-exit expected-text args... : command-line handling
+    local label=$1 want=$2 text=$3; shift 3
+    ( cd "$WORK" && "${FORGEC[@]}" "$@" ) > "$WORK/out" 2>&1
+    local rc=$?
+    if [ $rc -ne "$want" ]; then fail "cli: $label" "expected exit $want, got $rc"$'\n'"$(head -5 "$WORK/out")"
+    elif ! grep -qF -- "$text" "$WORK/out"; then fail "cli: $label" "output lacks '$text'"$'\n'"$(head -5 "$WORK/out")"
+    elif grep -q "Unhandled exception\|   at ForgeC\." "$WORK/out"; then fail "cli: $label" "printed a .NET stack trace"
+    else pass "cli: $label"; fi
 }
 
 echo "== host: $HOST"
@@ -127,6 +138,27 @@ while read -r name targets MODE _; do
         [ "$MODE" = run ] && run_case "$name" "$t" "-O0"
     done
 done < <(tr -d "\r" < "$ROOT/tests/manifest.txt")
+
+# Diagnostics: every tests/errors/*.fg must fail `forgec check` with tests/expected/<name>.check.
+for f in "$ROOT"/tests/errors/*.fg; do
+    name=$(basename "$f" .fg)
+    wanted "$name" || continue
+    check_case "$name" "$ROOT/tests/errors"
+done
+
+# Command line: bad usage is exit 2 with a message, never a stack trace.
+if [ ${#ONLY[@]} -eq 0 ]; then
+    printf 'module m;\nvoid Main() { Console.WriteLine(1); }\n' > "$WORK/ok.fg"
+    cli_case "no arguments"        2 "usage:"
+    cli_case "unknown command"     2 "unknown command 'frob'"       frob
+    cli_case "missing file arg"    2 "missing source file"          build
+    cli_case "unknown target"      2 "unknown target 'mips'"        build ok.fg --target mips
+    cli_case "option needs value"  2 "option '-o' needs a value"    build ok.fg -o
+    cli_case "unknown option"      2 "unknown option '--fast'"      build ok.fg --fast
+    cli_case "missing source file" 1 "cannot read"                  build does_not_exist.fg
+    cli_case "unwritable output"   1 "cannot write"                 build ok.fg -o "$WORK/no/such/dir/x.exe"
+    cli_case "valid build"         0 "forgec: wrote"                build ok.fg -o ok.exe
+fi
 
 echo
 echo "== $PASS passed, $FAIL failed"

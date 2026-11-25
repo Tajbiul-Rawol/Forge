@@ -10,6 +10,7 @@
          copy of the sources in a subfolder) from breaking the build with
          duplicate-type or multiple-entry-point errors. -->
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Frontend.cs" />

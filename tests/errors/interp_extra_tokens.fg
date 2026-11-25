@@ -1,0 +1,8 @@
+// An interpolation hole must be a single expression.
+module holejunk;
+
+void Main() {
+    int a = 1;
+    int b = 2;
+    Console.WriteLine($"{a b}");
+}

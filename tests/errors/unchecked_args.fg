@@ -1,0 +1,9 @@
+// Interpolation holes and every builtin argument are type-checked.
+module holes;
+
+void Main() {
+    string r = "abc";
+    Console.WriteLine($"v={nosuch}");
+    Console.WriteLine(substr(r, 0, "two"));
+    Console.WriteLine(substr(r, alsoMissing, 1));
+}

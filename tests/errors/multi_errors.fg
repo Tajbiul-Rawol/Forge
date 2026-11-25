@@ -1,0 +1,15 @@
+// Errors in several functions and nested blocks are all reported.
+module multi;
+
+int Twice(int x) { return x * y; }
+
+void Main() {
+    int n = 3;
+    if (n > 1) {
+        Console.WriteLine(Twicee(n));
+    }
+    while (n > 0) {
+        n = n - "one";
+    }
+    Console.WriteLine(Twice(n));
+}

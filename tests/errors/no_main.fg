@@ -1,0 +1,4 @@
+// A program without Main.
+module nomain;
+
+int Helper() { return 1; }

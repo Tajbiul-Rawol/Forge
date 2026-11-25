@@ -1,3 +1,4 @@
 typos.fg:10: error: unknown function 'Squre' (did you mean 'Square'?)
-typos.fg: 1 error.
+typos.fg:11: error: use of undeclared variable 'cont' (did you mean 'count'?)
+typos.fg: 2 errors.
 exit: 1

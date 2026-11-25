@@ -1,0 +1,29 @@
+// More than 20 errors: the compiler stops after the first 20.
+module many;
+void Main() {
+    Console.WriteLine(undefined1);
+    Console.WriteLine(undefined2);
+    Console.WriteLine(undefined3);
+    Console.WriteLine(undefined4);
+    Console.WriteLine(undefined5);
+    Console.WriteLine(undefined6);
+    Console.WriteLine(undefined7);
+    Console.WriteLine(undefined8);
+    Console.WriteLine(undefined9);
+    Console.WriteLine(undefined10);
+    Console.WriteLine(undefined11);
+    Console.WriteLine(undefined12);
+    Console.WriteLine(undefined13);
+    Console.WriteLine(undefined14);
+    Console.WriteLine(undefined15);
+    Console.WriteLine(undefined16);
+    Console.WriteLine(undefined17);
+    Console.WriteLine(undefined18);
+    Console.WriteLine(undefined19);
+    Console.WriteLine(undefined20);
+    Console.WriteLine(undefined21);
+    Console.WriteLine(undefined22);
+    Console.WriteLine(undefined23);
+    Console.WriteLine(undefined24);
+    Console.WriteLine(undefined25);
+}

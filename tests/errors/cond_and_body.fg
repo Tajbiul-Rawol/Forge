@@ -1,0 +1,12 @@
+// A bad condition does not hide errors inside the block it guards.
+module condbody;
+
+void Main() {
+    int n = 1;
+    if (n) {
+        Console.WriteLine(nope);
+    }
+    while (n + 1) {
+        n = true;
+    }
+}
