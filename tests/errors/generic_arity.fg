@@ -1,0 +1,4 @@
+// The wrong number of type arguments for a generic struct.
+module m;
+struct Box<T> { T v; }
+void Main() { Box<int, int> b = null; }

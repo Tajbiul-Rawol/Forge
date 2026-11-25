@@ -1,0 +1,108 @@
+module generics;
+
+// Generic functions and structs. Type arguments are inferred from the call
+// (Max(3, 7)) or written out (Max<long>(..)). Each use with new types gets its own
+// compiled copy, so generic code runs as fast as hand-written code.
+
+T Max<T>(T a, T b) {
+    if (a > b) { return a; }
+    return b;
+}
+
+void Swap<T>(T* a, T* b) {
+    T t = *a;
+    *a = *b;
+    *b = t;
+}
+
+int IndexOf<T>(T[] xs, T x) {
+    for (int i = 0; i < xs.length; i++) {
+        if (xs[i] == x) { return i; }
+    }
+    return -1;
+}
+
+// A growable list; any element type
+struct List<T> {
+    T[] items;
+    int count;
+
+    void Add(T x) {
+        if (items == null) { items = new T[4]; }
+        if (count == items.length) {               // full: double the capacity
+            T[] bigger = new T[items.length * 2];
+            for (int i = 0; i < count; i++) { bigger[i] = items[i]; }
+            items = bigger;
+        }
+        items[count] = x;
+        count++;
+    }
+    T Get(int i) { return items[i]; }
+}
+
+// Two type parameters
+struct Pair<K, V> {
+    K key;
+    V value;
+}
+
+// A generic struct that refers to itself
+struct Node<T> {
+    T value;
+    Node<T> next;
+}
+
+int Sum(List<int> xs) {
+    int s = 0;
+    for (int i = 0; i < xs.count; i++) { s += xs.Get(i); }
+    return s;
+}
+
+// A generic function that uses a generic struct
+List<T> Repeat<T>(T x, int n) {
+    var out = new List<T> { };
+    for (int i = 0; i < n; i++) { out.Add(x); }
+    return out;
+}
+
+void Main() {
+    // inferred and explicit type arguments
+    Console.WriteLine($"Max(3, 7) = {Max(3, 7)}");
+    Console.WriteLine($"Max<long>(10, 2) = {Max<long>(10, 2)}");
+    Console.WriteLine($"Max(2.5, 1) = {Max(2.5, 1)}");       // int converts: T = double
+
+    int x = 1;
+    int y = 2;
+    Swap(&x, &y);
+    Console.WriteLine($"after Swap: x={x} y={y}");
+
+    var words = new string[3];
+    words[0] = "red"; words[1] = "green"; words[2] = "blue";
+    Console.WriteLine($"IndexOf(words, \"blue\") = {IndexOf(words, "blue")}");
+
+    // a List<int> growing from 4 to 16 slots
+    var squares = new List<int> { };
+    for (int i = 1; i <= 10; i++) { squares.Add(i * i); }
+    Console.WriteLine($"{squares.count} squares, sum {Sum(squares)}, last {squares.Get(9)}");
+
+    // the same struct with other element types, including a list of lists
+    var names = new List<string> { };
+    names.Add("forge");
+    names.Add("generics");
+    Console.WriteLine($"{names.Get(0)} {names.Get(1)}");
+    var grid = new List<List<int>> { };
+    grid.Add(squares);
+    Console.WriteLine($"grid[0][2] = {grid.Get(0).Get(2)}");
+
+    var p = new Pair<string, double> { key = "pi", value = 3.14159265358979 };
+    Console.WriteLine($"{p.key} = {p.value:F4}");
+
+    var second = new Node<string> { value = "world" };
+    var first = new Node<string> { value = "hello", next = second };
+    Console.WriteLine($"{first.value} {first.next.value}");
+
+    var stars = Repeat("*", 5);
+    string line = "";
+    for (int i = 0; i < stars.count; i++) { line += stars.Get(i); }
+    Console.WriteLine(line);
+}

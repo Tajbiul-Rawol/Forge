@@ -1,0 +1,14 @@
+// Generic misuse is reported like any type error; errors inside a generic body name the instance.
+module m;
+
+T Max<T>(T a, T b) { if (a > b) { return a; } return b; }
+T Make<T>() { T x; return x; }
+int Plain(int a) { return a; }
+
+void Main() {
+    string s = Max("a", "b");
+    int m = Make();
+    long w = Max(1, "x");
+    int p = Plain<int>(3);
+    Console.WriteLine(Max<int, int>(1, 2));
+}
