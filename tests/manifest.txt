@@ -10,6 +10,8 @@
 #           boot   kernel target: build at -O2 and -O0 and boot in QEMU with tests/boot/<example>.in
 #                  as input; the serial output must match tests/expected/<example>.boot
 #                  (without QEMU the image is only built)
+#           glibc  linux target linked against libc.so.6: run at -O2 and -O0 on a glibc Linux host,
+#                  or in the Docker image $FORGE_DOCKER; elsewhere only built
 #
 # On Windows, linux targets are build-only. On Linux, win targets are build-only.
 
@@ -37,7 +39,8 @@ io_errors       win,linux   run
 interp_strings  win,linux   run
 doubles         win,linux   run
 
-ffi_linux       linux       build
+ffi_linux       linux       glibc
+ffi_glibc       linux       glibc
 window          win         build
 http_server     win,linux   build
 tcp_client      win,linux   build

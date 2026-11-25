@@ -107,6 +107,14 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
 
+### Session: glibc extern test (2026-11-26)
+- `ffi_linux.fg` worked on glibc 2.39 (Ubuntu 24.04 container via Docker Desktop) at once. New `examples/ffi_glibc.fg`: 10-argument snprintf (stack args), printf from depths 0-5 (alignment), a qsort callback calling abs(), string/memory/env/time functions, printf from a Forge thread. All correct.
+- Manifest mode `glibc`: run natively on a glibc Linux host (CI Ubuntu), or in `$FORGE_DOCKER`; build-only elsewhere.
+- Found and fixed:
+  - `Console.WriteLine($"... {f()}")` printed the text before the hole and only then called `f()`, so output from `f` (or a joined thread) landed mid-line. When a hole runs user code (a Forge function, extern, join, await, spawn) the line is now built first (`InterpRunsUserCode` / `InterpConcat`), as in C#.
+  - `str(n)` (and every `$"..."` used as a value) dropped the minus sign: `str(-1)` was "1" (itoa ignored it on purpose). Fixed, including long.MinValue.
+  - `toint("-42")` returned 0: atoi now takes a leading - or +.
+
 ### Session: kernel boot tests (2026-11-26)
 - QEMU installed (C:\Program Files\qemu). `kernel.fg` and `kernel_fib.fg` booted at once; `kernel_os.fg` exposed two boot bugs:
   - the page tables and stack sat at fixed addresses (0x101000..0x108000) that a kernel with more than ~3 KB of code overlapped: the stub wrote table entries over the code and the CPU took the code bytes as page-table entries (page fault with the reserved-bit error, then a triple fault). `LowerKernel` now puts PML4/PDPT/PD and a 64 KB stack in the zero-filled tail after the image, page aligned, and errors if that would reach the heap at 2 MB.
@@ -181,7 +189,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 ## 6. Not verified / known limits
 
 - **Kernel target:** booted in QEMU (TCG) by the test suite, not on real hardware yet (no GRUB ISO). Serial input from a Windows pipe arrives without CR, so the shell is fed LF line endings. Interrupt handlers must not use `double` (it is not available on the kernel target anyway).
-- **glibc dynamic linking is untested** (only musl was available). The default `--interp` is `/lib64/ld-linux-x86-64.so.2`.
+- **glibc:** `extern` is tested on Ubuntu 24.04 (glibc 2.39) in CI and via `FORGE_DOCKER`; libc calls from Forge threads share the main thread's libc TLS (`fs`), so keep heavy libc use (printf, malloc) to one thread at a time.
 - Syntax errors stop the compile at the first one (type errors are all reported). Errors have a line but no column.
 - `ioerr()` gives the OS error code, not a portable one: compare codes per OS, or just test `!= 0`. `try` on a builtin cannot tell you the code either (use `ioerr()` after it). `tcp_connect` on Linux takes IP addresses only (no DNS without libc); a host name fails with EINVAL (22).
 - Interrupt handlers must not allocate while interrupting code that also allocates (the allocator isn't reentrant).
@@ -201,4 +209,4 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 5. Bare metal: a GDT/TSS helper example, APIC timer, framebuffer output, a bootable ISO (GRUB) for real hardware.
 6. Performance: more loop optimizations (moving invariant arithmetic out of loops, strength reduction), fewer redundant moves, unrolling. JSON is still 1.4x behind C.
 7. Measure C, C++, Rust and C# multithreaded HTTP on Linux (needs Docker Desktop running, or toolchains in WSL).
-8. A glibc test of `extern` on Linux.
+8. (Done: glibc test of `extern` on Linux.)

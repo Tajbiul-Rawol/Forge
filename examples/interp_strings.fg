@@ -6,6 +6,10 @@ module interp_strings;
 string Twice(string s) { return s + s; }
 int Len(string s) { return s.length; }
 
+// prints while a hole is being evaluated: like C#, the whole line it appears in is
+// built first, so "Noisy runs first" comes out before that line
+int Noisy(int x) { Console.WriteLine("Noisy runs first"); return x * 2; }
+
 void Main() {
     string name = "forge";
     Console.WriteLine($"hello {Twice("ab")}!");
@@ -14,4 +18,5 @@ void Main() {
     Console.WriteLine($"nested: {Twice($"[{name}]")} and {Twice($"<{Twice("q")}>")}");
     Console.WriteLine($"compare: {name == "forge"} {name + "!"}");
     Console.WriteLine($"outer \"quotes\" and {Len("")} {"literal"}");
+    Console.WriteLine($"built before printing: {Noisy(21)}");
 }

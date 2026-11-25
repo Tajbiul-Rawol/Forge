@@ -154,6 +154,7 @@ chmod +x hello
 tests/run.sh                          # all examples, -O2 and -O0, compared with tests/expected/
 tests/run.sh hello structs            # only some examples
 FORGE_WSL=docker-desktop tests/run.sh # on Windows: also run the Linux binaries in WSL
+FORGE_DOCKER=ubuntu:24.04 tests/run.sh # also run the glibc examples in a container
 tests/run.sh --update hello           # accept new output as the baseline
 ```
 
@@ -277,7 +278,9 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
   heap bytes, and `putc(ch)` to emit one byte to stdout
 - `Console.WriteLine("text")`, `Console.WriteLine(intExpr)`, and `$"..."`
   string literals with `{expr}` holes; a hole can hold any expression, including
-  string literals and nested `$"..."` (`$"file: {readfile("a.txt")}"`)
+  string literals and nested `$"..."` (`$"file: {readfile("a.txt")}"`). As in C#, the
+  whole string is built before `Console.WriteLine` prints any of it, so output from a
+  function called in a hole comes first
 - typed errors:
   - `int F(...) throws SomeError { ... throw new SomeError("msg"); ... }`
   - `var v = try F(a) else fallback;`  — handle inline
@@ -432,6 +435,12 @@ extern "libc.so.6" i32 printf(string fmt, long a);                   // Linux
   `--interp /lib/ld-musl-x86_64.so.1` and use `libc.musl-x86_64.so.1`. Forge's own
   thread pointer lives in `gs`, leaving `fs` to libc. Call `fflush(null)` before
   exiting if you used `printf`.
+- **Tested on glibc:** `examples/ffi_linux.fg` and `examples/ffi_glibc.fg` run on
+  Ubuntu 24.04 (glibc 2.39) at -O2 and -O0 in CI and in the local suite. They cover
+  variadic `printf` and a 10-argument `snprintf` (arguments 7+ on the stack), calls from
+  every stack depth (glibc's `printf` needs a 16-byte aligned stack), a `qsort` callback
+  that calls back into C, `getenv`/`time`/`memcpy`/`strtol`, and `printf` from a Forge
+  thread. To run them locally on Windows: `FORGE_DOCKER=ubuntu:24.04 tests/run.sh`.
 - Programs without externs stay fully static, with no libc.
 
 ## Bare metal: ports, interrupts, paging, inline assembly

@@ -20,4 +20,12 @@ void Main() {
 
     string sub = substr("abcdefgh", 2, 3);  // cde
     Console.WriteLine(sub);
+
+    // negative numbers both ways
+    long neg = -1234;
+    string ns = str(neg);
+    Console.WriteLine(ns + " " + str(-9223372036854775807 - 1));   // -1234 -9223372036854775808
+    Console.WriteLine(toint("-42") + toint("+8"));                    // -34
+    string asValue = $"[{neg}]";
+    Console.WriteLine(asValue);                                       // [-1234]
 }
