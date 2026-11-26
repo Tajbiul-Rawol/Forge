@@ -1,3 +1,3 @@
-cf_two_defaults.fg:9: error: a switch can have only one 'default'
+cf_two_defaults.fg:9:49: error: a switch can have only one 'default'
 cf_two_defaults.fg: 1 error.
 exit: 1

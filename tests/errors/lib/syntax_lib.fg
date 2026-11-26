@@ -1,0 +1,7 @@
+module syntax_lib;
+
+int Square(int n) {
+    return n * n
+}
+
+int Cube(int n) { return n * ; }

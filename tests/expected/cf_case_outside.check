@@ -1,3 +1,3 @@
-cf_case_outside.fg:9: error: 'case' is only allowed inside a switch
+cf_case_outside.fg:9:5: error: 'case' is only allowed inside a switch
 cf_case_outside.fg: 1 error.
 exit: 1

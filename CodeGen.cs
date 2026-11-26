@@ -788,7 +788,7 @@ sealed partial class CodeGen {
         // generic instances share their lines with the template: report each warning once
         var seenW = new HashSet<(int, string)>();
         Warnings.RemoveAll(w => !seenW.Add((w.Line, w.Message)));
-        if (Errors.Count > 0) throw new ForgeErrors(Errors.OrderBy(e => e.Line).ToList());
+        if (Errors.Count > 0) throw new ForgeErrors(Errors.OrderBy(e => Sources.Order(e.Line)).ToList());
     }
 
     // Run one check; a ForgeException becomes a collected error instead of aborting.

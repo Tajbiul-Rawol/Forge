@@ -1,3 +1,3 @@
-cf_duplicate_case.fg:9: error: duplicate case label 1
+cf_duplicate_case.fg:9:48: error: duplicate case label 1
 cf_duplicate_case.fg: 1 error.
 exit: 1

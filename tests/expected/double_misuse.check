@@ -1,8 +1,8 @@
-double_misuse.fg:10: error: '%' is not defined for double (only + - * / and comparisons)
-double_misuse.fg:11: error: '&' is not defined for double (only + - * / and comparisons)
-double_misuse.fg:12: error: cannot compare double with string
-double_misuse.fg:13: error: initializer of 'n' must be int, got double (convert with (int)x, which truncates toward zero)
-double_misuse.fg:14: error: cannot cast P to double
-double_misuse.fg:15: error: unknown format 'X2' for a double (use F0..F15, e.g. {x:F2})
+double_misuse.fg:10:18: error: '%' is not defined for double (only + - * / and comparisons)
+double_misuse.fg:11:19: error: '&' is not defined for double (only + - * / and comparisons)
+double_misuse.fg:12:19: error: cannot compare double with string
+double_misuse.fg:13:5: error: initializer of 'n' must be int, got double (convert with (int)x, which truncates toward zero)
+double_misuse.fg:14:16: error: cannot cast P to double
+double_misuse.fg:15:23: error: unknown format 'X2' for a double (use F0..F15, e.g. {x:F2})
 double_misuse.fg: 6 errors.
 exit: 1

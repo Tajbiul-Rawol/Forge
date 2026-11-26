@@ -44,8 +44,15 @@ sealed class Lexer {
     static readonly string[] TwoChar = { "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
         "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=" };
 
+    // Every token's Line is a position id (Sources.NewPos): file, line and column.
     readonly string _s; int _i; int _line = 1;
-    public Lexer(string s, int firstLine = 1) { _s = s; _line = firstLine; }
+    readonly int _file, _firstLine, _firstCol;
+    int _lineStart, _tokStart;                        // index where this line / this token starts
+    public Lexer(string s, int file = 0, int firstLine = 1, int firstCol = 1) {
+        _s = s; _file = file; _line = _firstLine = firstLine; _firstCol = firstCol;
+    }
+    // position of the token being lexed
+    int P() => Sources.NewPos(_file, _line, _tokStart - _lineStart + (_line == _firstLine ? _firstCol : 1));
 
     char Cur => _i < _s.Length ? _s[_i] : '\0';
     char Nxt => _i + 1 < _s.Length ? _s[_i + 1] : '\0';
@@ -54,7 +61,8 @@ sealed class Lexer {
         var toks = new List<Tok>();
         while (_i < _s.Length) {
             char c = Cur;
-            if (c == '\n') { _line++; _i++; continue; }
+            _tokStart = _i;
+            if (c == '\n') { _line++; _i++; _lineStart = _i; continue; }
             if (c is ' ' or '\t' or '\r') { _i++; continue; }
             if (c == '/' && Nxt == '/') { while (_i < _s.Length && _s[_i] != '\n') _i++; continue; }
             if (c == '"') { toks.Add(LexString()); continue; }
@@ -64,20 +72,21 @@ sealed class Lexer {
             bool matched = false;
             foreach (var tc in ThreeChar)
                 if (_i + 2 < _s.Length && string.CompareOrdinal(_s, _i, tc, 0, 3) == 0) {
-                    toks.Add(new Tok(TokKind.Op, tc, _line)); _i += 3; matched = true; break;
+                    toks.Add(new Tok(TokKind.Op, tc, P())); _i += 3; matched = true; break;
                 }
             if (matched) continue;
             foreach (var tc in TwoChar)
                 if (c == tc[0] && Nxt == tc[1]) {
-                    toks.Add(new Tok(TokKind.Op, tc, _line)); _i += 2; matched = true; break;
+                    toks.Add(new Tok(TokKind.Op, tc, P())); _i += 2; matched = true; break;
                 }
             if (matched) continue;
             if ("+-*/%<>=!(){};,.[]&|^:".IndexOf(c) >= 0) {
-                toks.Add(new Tok(TokKind.Op, c.ToString(), _line)); _i++; continue;
+                toks.Add(new Tok(TokKind.Op, c.ToString(), P())); _i++; continue;
             }
-            throw new ForgeException($"unexpected character '{c}'", _line);
+            throw new ForgeException($"unexpected character '{c}'", P());
         }
-        toks.Add(new Tok(TokKind.Eof, "", _line));
+        _tokStart = _i;
+        toks.Add(new Tok(TokKind.Eof, "", P()));
         return toks;
     }
 
@@ -85,7 +94,7 @@ sealed class Lexer {
     // kept verbatim (ParseInterp lexes them later), and a string literal inside a
     // hole, $"{f("a\"b")}", is copied whole so its quotes don't end the outer string.
     Tok LexInterpString() {
-        int line = _line; _i++; var sb = new System.Text.StringBuilder();
+        int line = P(); _i++; var sb = new System.Text.StringBuilder();
         int depth = 0;
         while (true) {
             if (_i >= _s.Length || _s[_i] == '\n') throw new ForgeException("unterminated string", line);
@@ -144,7 +153,7 @@ sealed class Lexer {
     }
 
     Tok LexString() {
-        int line = _line; _i++; var sb = new System.Text.StringBuilder();
+        int line = P(); _i++; var sb = new System.Text.StringBuilder();
         while (true) {
             if (_i >= _s.Length) throw new ForgeException("unterminated string", line);
             char c = _s[_i];
@@ -161,7 +170,7 @@ sealed class Lexer {
     }
 
     Tok LexNumber() {
-        int line = _line, start = _i;
+        int line = P(), start = _i;
         // hex literal: 0x....
         if (_s[_i] == '0' && _i + 1 < _s.Length && (_s[_i + 1] == 'x' || _s[_i + 1] == 'X')) {
             _i += 2;
@@ -187,7 +196,7 @@ sealed class Lexer {
     }
 
     Tok LexWord() {
-        int line = _line, start = _i;
+        int line = P(), start = _i;
         while (_i < _s.Length && (char.IsLetterOrDigit(_s[_i]) || _s[_i] == '_')) _i++;
         string w = _s.Substring(start, _i - start);
         return new Tok(Keywords.Contains(w) ? TokKind.Kw : TokKind.Id, w, line);
@@ -334,6 +343,57 @@ sealed class Parser {
             }
         }
     }
+    // ---- syntax errors: record, skip the broken statement or declaration, keep going
+    public readonly List<Diagnostic> Errors = new();
+    sealed class StopParsing : Exception { }              // at end of file: nothing left to recover with
+    void Record(ForgeException e) {
+        if (!Errors.Any(x => x.Line == e.Line && x.Message == e.Message))
+            Errors.Add(new Diagnostic(Severity.Error, e.Line, e.Message));
+        if (Cur.Kind == TokKind.Eof) throw new StopParsing();
+        if (Errors.Count >= CodeGen.MaxErrors) throw new ForgeErrors(Errors);
+    }
+    // Skips the rest of the broken statement or declaration that began at token start:
+    // past its ';', or past its {...} body, or up to the '}' that closes the enclosing
+    // block. Brackets count from start, so an error inside for (...) or a struct body
+    // skips the whole construct; a '{' drops unclosed parentheses (int F(int a {).
+    void Sync(int start) {
+        if (AtBoundary(start)) return;
+        int paren = 0, brace = 0;
+        for (int k = start; k < _i; k++) Track(_t[k], ref paren, ref brace);
+        while (Cur.Kind != TokKind.Eof) {
+            if (AtOp("}")) {
+                if (brace == 0) { if (_i == start) Eat(); return; }      // the enclosing block's end
+                Eat();
+                if (--brace == 0) return;
+                continue;
+            }
+            if (AtOp(";") && paren == 0 && brace == 0) { Eat(); return; }
+            Track(Cur, ref paren, ref brace);
+            Eat();
+        }
+    }
+    static void Track(Tok t, ref int paren, ref int brace) {
+        if (t.Kind != TokKind.Op) return;
+        switch (t.Text) {
+            case "(" or "[": paren++; break;
+            case ")" or "]": if (paren > 0) paren--; break;
+            case "{": paren = 0; brace++; break;
+            case "}": if (brace > 0) brace--; break;
+        }
+    }
+    // An error found after a whole statement was read (a duplicate case, a bad interrupt
+    // signature): the parser already stands at the next one, so nothing is skipped.
+    bool AtBoundary(int start) {
+        if (_i <= start || !(_t[_i - 1].Is(TokKind.Op, ";") || _t[_i - 1].Is(TokKind.Op, "}"))) return false;
+        int depth = 0;                                    // ( [ { all closed again
+        for (int k = start; k < _i; k++) {
+            if (_t[k].Kind != TokKind.Op) continue;
+            if (_t[k].Text is "(" or "[" or "{") depth++;
+            else if (_t[k].Text is ")" or "]" or "}") depth--;
+        }
+        return depth == 0;
+    }
+
     public HashSet<string> StructNames => _structs;      // shared with the parsers of imported files (Imports.cs)
     bool IsStructName(Tok t) => t.Kind == TokKind.Id && (_structs.Contains(t.Text) || _typeParams.Contains(t.Text));
 
@@ -382,6 +442,12 @@ sealed class Parser {
     bool Accept(TokKind k, string s) { if (Cur.Kind == k && Cur.Text == s) { _i++; return true; } return false; }
     Tok Expect(TokKind k, string s) {
         if (Cur.Kind == k && Cur.Text == s) return _t[_i++];
+        // a ';' missing at the end of a line: point just past the line's last token
+        if (s == ";" && _i > 0 && Sources.LineOf(_t[_i - 1].Line) != Sources.LineOf(Cur.Line)) {
+            var p = _t[_i - 1];
+            int at = Sources.NewPos(Sources.FileOf(p.Line), Sources.LineOf(p.Line), Sources.ColOf(p.Line) + p.Text.Length);
+            throw new ForgeException($"missing ';' after '{p.Text}'", at);
+        }
         throw new ForgeException($"expected '{s}' but found '{Cur.Text}'", Cur.Line);
     }
     Tok ExpectId() {
@@ -402,7 +468,20 @@ sealed class Parser {
             Eat();
             Expect(TokKind.Op, ";");
         }
-        while (Cur.Kind != TokKind.Eof) {
+        try {
+            while (Cur.Kind != TokKind.Eof) {
+                int start = _i;
+                try { ParseDecl(m); }
+                catch (ForgeException e) { Record(e); _jumps.Clear(); _typeParams = new(); Sync(start); }
+            }
+        } catch (StopParsing) { }
+        if (Errors.Count > 0) throw new ForgeErrors(Errors.OrderBy(e => Sources.Order(e.Line)).ToList());
+        return m;
+    }
+
+    // one top-level declaration: a struct, an extern, an interrupt handler or a function
+    void ParseDecl(ModuleNode m) {
+        {
             if (Cur.Is(TokKind.Id, "import") && Peek().Kind == TokKind.Str)
                 throw new ForgeException("imports must come right after the 'module' line", Cur.Line);
             if (AtKw("struct") || (AtKw("packed") && Peek().Is(TokKind.Kw, "struct"))) ParseStruct(m);
@@ -418,7 +497,6 @@ sealed class Parser {
             }
             else m.Funcs.Add(ParseFunc());
         }
-        return m;
     }
 
     // Foreign functions:
@@ -564,7 +642,13 @@ sealed class Parser {
         var list = new List<Stmt>();
         while (!AtOp("}")) {
             if (Cur.Kind == TokKind.Eof) throw new ForgeException("missing '}' at end of file", Cur.Line);
-            ParseStmtInto(list);
+            int start = _i, jumps = _jumps.Count;
+            try { ParseStmtInto(list); }
+            catch (ForgeException e) {
+                Record(e);
+                if (_jumps.Count > jumps) _jumps.RemoveRange(jumps, _jumps.Count - jumps);
+                Sync(start);
+            }
         }
         Expect(TokKind.Op, "}");
         return list;
@@ -1091,7 +1175,8 @@ sealed class Parser {
                     if (d == ':' && depth == 1) { fmt = ""; j++; while (j < raw.Length && raw[j] != '}') { fmt += raw[j]; j++; } break; }
                     inner.Append(d); j++;
                 }
-                var sub = new Parser(new Lexer(inner.ToString(), line).Lex(), _structs, this);
+                // the hole's tokens: positions from the string's, + 2 for $" and the {
+                var sub = new Parser(new Lexer(inner.ToString(), Sources.FileOf(line), Sources.LineOf(line), Sources.ColOf(line) + 2 + k + 1).Lex(), _structs, this);
                 var e = sub.ParseExpr();
                 if (sub.Cur.Kind != TokKind.Eof)
                     throw new ForgeException($"unexpected '{sub.Cur.Text}' in interpolation hole {{{inner}}}", line);

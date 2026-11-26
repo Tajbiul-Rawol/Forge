@@ -1,3 +1,3 @@
-import_syntax.fg:3: error: import takes a file name in quotes, like  import "geometry.fg";  (found 'helpers')
+import_syntax.fg:3:8: error: import takes a file name in quotes, like  import "geometry.fg";  (found 'helpers')
 import_syntax.fg: 1 error.
 exit: 1

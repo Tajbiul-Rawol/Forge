@@ -1,0 +1,9 @@
+syntax_many.fg:6:17: error: unexpected token ';' in expression
+syntax_many.fg:10:22: error: expected ')' but found '{'
+syntax_many.fg:15:14: error: missing ';' after '4'
+syntax_many.fg:17:13: error: unexpected token ')' in expression
+syntax_many.fg:22:29: error: expected ';' but found ')'
+syntax_many.fg:24:25: error: unexpected token ';' in expression
+syntax_many.fg:28:27: error: expected an identifier but found '}'
+syntax_many.fg: 7 errors.
+exit: 1

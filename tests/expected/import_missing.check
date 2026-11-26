@@ -1,3 +1,3 @@
-import_missing.fg:3: error: cannot find imported file 'lib/nope.fg'
+import_missing.fg:3:1: error: cannot find imported file 'lib/nope.fg'
 import_missing.fg: 1 error.
 exit: 1

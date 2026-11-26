@@ -1,5 +1,5 @@
-unchecked_args.fg:6: error: use of undeclared variable 'nosuch'
-unchecked_args.fg:7: error: substr(s,start,len)
-unchecked_args.fg:8: error: use of undeclared variable 'alsoMissing'
+unchecked_args.fg:6:28: error: use of undeclared variable 'nosuch'
+unchecked_args.fg:7:23: error: substr(s,start,len)
+unchecked_args.fg:8:33: error: use of undeclared variable 'alsoMissing'
 unchecked_args.fg: 3 errors.
 exit: 1

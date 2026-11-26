@@ -1,3 +1,3 @@
-generic_arity.fg:4: error: 'Box' takes 1 type argument(s), got 2
+generic_arity.fg:4:15: error: 'Box' takes 1 type argument(s), got 2
 generic_arity.fg: 1 error.
 exit: 1

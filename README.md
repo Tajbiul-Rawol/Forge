@@ -31,7 +31,7 @@ forgec/
 ├── CodeGen.cs         <- type checker + machine-code generation + register allocator
 ├── Optimizer.cs       <- inlining, tail-recursion elimination, partial inlining, folding
 ├── BoundsCheck.cs     <- array bounds checks (inline compare + out-of-line error report)
-├── Imports.cs         <- multi-file programs: import "file.fg", file:line locations
+├── Imports.cs         <- multi-file programs: import "file.fg", file:line:col positions
 ├── Threads.cs         <- spawn/join, per-thread heap arenas, atomics, locks (Windows + Linux)
 ├── InlineAsm.cs       <- the asm("...") assembler (Intel syntax)
 ├── AsyncRuntime.cs    <- async/await: coroutine scheduler (written in Forge) + docs
@@ -204,10 +204,24 @@ dotnet bin/Release/net10.0/forgec.dll complete <file.fg> <line> <col>
 - `--no-bounds-check` — compile array indexing without bounds checks (see
   "Array bounds checks" below). Only for code that is already known to be correct.
 
-**Errors and exit codes.** Problems are printed as `file:line: error: message`. Type
-errors don't stop at the first one: `forgec` reports every independent error (up to 20)
-and leaves out follow-on errors caused by a declaration that already failed. A syntax
-error still stops the compile at that point.
+**Errors and exit codes.** Problems are printed as `file:line:col: error: message`
+(columns count from 1, as in gcc and clang, so editors can jump to them). `forgec`
+doesn't stop at the first error:
+
+- **Syntax errors.** After one, the parser skips the rest of that statement or
+  declaration (past its `;`, or past its `{...}` body) and carries on, so every broken
+  statement gets its own error. A missing `;` is reported at the end of the line that
+  needs it (`missing ';' after '4'`). If anything fails to parse, the type checker
+  doesn't run, so you only see errors you actually wrote.
+- **Type errors.** Every independent error is reported, without the follow-on errors
+  caused by a declaration that already failed.
+- Up to 20 errors, sorted by file, line and column (the main file first).
+
+```
+syntax_many.fg:6:17: error: unexpected token ';' in expression
+syntax_many.fg:10:22: error: expected ')' but found '{'
+syntax_many.fg:15:14: error: missing ';' after '4'
+```
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -224,8 +238,8 @@ error still stops the compile at that point.
 variables, functions, types, and `.length`:
 
 ```
-typos.fg:10: error: unknown function 'Squre' (did you mean 'Square'?)
-typos.fg:11: error: use of undeclared variable 'cont' (did you mean 'count'?)
+typos.fg:10:23: error: unknown function 'Squre' (did you mean 'Square'?)
+typos.fg:11:23: error: use of undeclared variable 'cont' (did you mean 'count'?)
 ```
 
 **Compile-time checks.** Beyond type errors, the compiler reports:
@@ -297,10 +311,10 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
   - `var v = try F(a) else fallback;`  — handle inline
   - `var v = try F(a);`                — propagate (caller must also declare `throws`)
 
-Anything outside the subset produces a line-numbered compile error, e.g.:
+Anything outside the subset produces a compile error with its line and column, e.g.:
 
 ```
-features.fg:3: error: 'D' can throw - call it with 'try'
+features.fg:3:5: error: 'D' can throw - call it with 'try'
 ```
 
 - structs with fields, methods and object initializers; `null`; `sizeof(T)`
@@ -351,7 +365,7 @@ void Main() {
   Order doesn't matter: a file can use types and functions from any file in the program.
 - **Transitive, loaded once.** An imported file's own imports are loaded too. Each file is
   read once however many files import it, so two files may import each other.
-- **Errors name their file.** Errors and warnings print as `lib/geometry.fg:20: error: ...`.
+- **Errors name their file.** Errors and warnings print as `lib/geometry.fg:20:12: error: ...`.
   A name defined in two files is an error that points at both. A bounds-check failure
   in an imported file says `(geometry.fg line 20)`.
 - **Every file starts with `module name;`.** Only one file may define `Main`.
