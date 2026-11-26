@@ -12,4 +12,5 @@ continue
 bt
 p k
 finish
+delete
 continue

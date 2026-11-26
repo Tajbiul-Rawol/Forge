@@ -1,0 +1,29 @@
+Breakpoint 1: file examples/lib/geometry.fg, line 9.
+Breakpoint 2: file examples/lib/geometry.fg, line 17.
+
+Breakpoint 1, Dist2 (a=, b=) at examples/lib/geometry.fg:9
+9	    int dy = b.Y - a.Y;
+#0  Dist2 (a=, b=) at examples/lib/geometry.fg:9
+#1  Main () at examples/imports.fg:12
+#2  _start ()
+$1 = {X = 1, Y = 2}
+$2 = {X = 4, Y = 6}
+$3 = 3
+25
+== forge at (0, 0) ==
+9
+pear
+
+Breakpoint 2, Corner (p=, k=2) at examples/lib/geometry.fg:17
+17	    int[] xs = new int[4];
+#0  Corner (p=, k=2) at examples/lib/geometry.fg:17
+#1  Main () at examples/imports.fg:16
+#2  _start ()
+$4 = 2
+Main () at examples/imports.fg:16
+16	    Console.WriteLine(Corner(b, 2));
+Value returned is $5 = 4
+4
+Index 4 is out of range for an array of length 4 (geometry.fg line 20)
+[Inferior 1 (process N) exited with code 01]
+exit: 0
