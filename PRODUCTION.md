@@ -18,8 +18,9 @@ Each item needs its tests in `tests/run.sh` and its documentation in `README.md`
       Windows, DWARF on Linux). (`-g`: `DebugInfo.cs`, `Pdb.cs`, `tests/debug/`)
 - [x] **5. Indexers.** `list[i]` and `dict[key]` on `List<T>` and `Dictionary<K,V>`.
       (`IndexerType` in `CodeGen.cs`, `examples/indexers.fg`, `tests/errors/indexer_misuse.fg`)
-- [ ] **6. README matches the compiler.** Remove stale claims such as "function calls
-      (up to 4 parameters)".
+- [x] **6. README matches the compiler.** Remove stale claims such as "function calls
+      (up to 4 parameters)". (Every section checked against the compiler; `tests/run.sh`
+      fails if an example or source file is missing from the README's file tree)
 - [ ] **7. Tests stay green.** The suite, the fuzzer and CI pass, with tests for each item
       above.
 

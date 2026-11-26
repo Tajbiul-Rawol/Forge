@@ -1,0 +1,38 @@
+module many_params;
+
+// Functions with more than 4 parameters: the first 4 travel in registers, the rest on
+// the stack. Arguments are evaluated left to right, as in C#.
+
+struct Point { int X; int Y; }
+
+int Next(int[] c) { c[0] = c[0] + 1; return c[0]; }
+
+long Weighted(long a, long b, long c, long d, long e, long f, long g) {
+    return a + 2 * b + 3 * c + 4 * d + 5 * e + 6 * f + 7 * g;
+}
+
+string Describe(string name, int age, double height, bool admin, Point home, string city) {
+    string role = "user";
+    if (admin) { role = "admin"; }
+    return $"{name} ({age}, {height:F2} m, {role}) lives at {home.X},{home.Y} in {city}";
+}
+
+// a recursive function with 6 parameters (tail recursion becomes a loop)
+long SumRange(long from, long to, long step, long acc, long calls, long limit) {
+    if (from > to || calls >= limit) { return acc; }
+    return SumRange(from + step, to, step, acc + from, calls + 1, limit);
+}
+
+// 5+ arguments whose own arguments are calls with 5+ arguments
+int Six(int a, int b, int c, int d, int e, int f) { return a * 100000 + b * 10000 + c * 1000 + d * 100 + e * 10 + f; }
+
+void Main() {
+    Console.WriteLine(Weighted(1, 1, 1, 1, 1, 1, 1));                 // 28
+    int[] c = new int[1];
+    // left to right: 1, 2, 3, 4, 5, 6
+    Console.WriteLine(Six(Next(c), Next(c), Next(c), Next(c), Next(c), Next(c)));
+    Console.WriteLine(Six(1, 2, 3, 4, 5, Six(0, 0, 0, 0, 0, 9)));     // 123459
+    Console.WriteLine(Six(Six(0, 0, 0, 0, 0, 1), 2, 3, 4, 5, 6));     // 123456
+    Console.WriteLine(Describe("Ada", 36, 1.65, true, new Point { X = 3, Y = 4 }, "London"));
+    Console.WriteLine(SumRange(1, 100, 1, 0, 0, 1000));               // 5050
+}
