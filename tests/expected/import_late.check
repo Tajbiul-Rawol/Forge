@@ -1,0 +1,3 @@
+import_late.fg:5: error: imports must come right after the 'module' line
+import_late.fg: 1 error.
+exit: 1

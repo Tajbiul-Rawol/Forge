@@ -9,7 +9,8 @@ Each item needs its tests in `tests/run.sh` and its documentation in `README.md`
 - [x] **1. Array bounds checks.** Every `a[i]` / `a[i] = v` on an array is checked and
       reports the line; `--no-bounds-check` opts out. (`BoundsCheck.cs`,
       `examples/bounds.fg`, `examples/bounds_loop.fg`)
-- [ ] **2. Multi-file programs.** One `.fg` file can import another.
+- [x] **2. Multi-file programs.** One `.fg` file can import another: `import "lib/x.fg";`.
+      (`Imports.cs`, `examples/imports.fg`, `tests/errors/import_*.fg`)
 - [ ] **3. Better errors.** Errors carry line and column, and the parser reports more than
       one syntax error.
 - [ ] **4. Debug info.** A compiled program can be stepped through in a debugger (PDB on

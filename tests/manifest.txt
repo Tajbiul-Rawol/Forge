@@ -24,6 +24,7 @@ features        win,linux   run
 fileio          win,linux   run
 forloop         win,linux   run
 hello           win,linux   run
+imports         win,linux   run
 inline_asm      win,linux   run
 lowlevel        win,linux   run
 memory          win,linux   run

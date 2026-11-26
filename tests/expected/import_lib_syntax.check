@@ -1,0 +1,3 @@
+lib/unclosed.fg:5: error: missing '}' at end of file
+import_lib_syntax.fg: 1 error.
+exit: 1

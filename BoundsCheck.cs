@@ -17,12 +17,14 @@ namespace ForgeC;
 //
 //     Index 5 is out of range for an array of length 3 (line 12)
 //
+// (or "(geometry.fg line 12)" for code from an imported file: one bounds_fail per file)
+//
 // and exits with code 1, like the List / Substring checks in the standard library.
 // Pointers (p[i]) are never checked, and neither are strings (their length is not
 // stored) or the compiler's own runtime code. `--no-bounds-check` turns checks off.
 sealed partial class CodeGen {
     public bool BoundsChecks = true;
-    bool _usesBounds;
+    readonly SortedSet<int> _boundsFiles = new();           // file numbers that need a bounds_fail
     readonly List<(string Label, int Base, int Index, int K, int Line)> _boundsStubs = new();
 
     bool ChecksBounds => BoundsChecks && !_cur.IsRuntime;
@@ -58,24 +60,27 @@ sealed partial class CodeGen {
             else _a.PushR(s.Index);                                    // push idx (+ k already added)
             _a.MemSib(0xff, 0, false, false, 6, s.Base, -1, 1, -8);    // push qword [base - 8]
             _a.PopR(RSI); _a.PopR(RDI);
-            _a.MovRI(RDX, s.Line);
-            _a.JmpRel("bounds_fail");
-            _usesBounds = true;
+            int file = Sources.FileOf(s.Line);
+            _a.MovRI(RDX, Sources.LineOf(s.Line));
+            _a.JmpRel(BoundsFailLabel(file));
+            _boundsFiles.Add(file);
         }
         _boundsStubs.Clear();
     }
 
     // Never returns. rbx/r12/r13 survive print_int and write_out on every target.
-    void EmitBoundsFail() {
-        if (!_usesBounds) return;
-        _a.Label("bounds_fail");
+    static string BoundsFailLabel(int file) => file == 0 ? "bounds_fail" : "bounds_fail$" + file;
+    void EmitBoundsFail() { foreach (int f in _boundsFiles) EmitBoundsFail(f); }
+    void EmitBoundsFail(int file) {
+        _a.Label(BoundsFailLabel(file));
         _a.MovRR(RBX, RDI); _a.MovRR(R12, RSI); _a.MovRR(R13, RDX);
         _a.AndRspImm8(-16);
         EmitPrintLiteral("Index ");
         _a.MovRR(RDI, RBX); _a.CallRel("print_int");
         EmitPrintLiteral(" is out of range for an array of length ");
         _a.MovRR(RDI, R12); _a.CallRel("print_int");
-        EmitPrintLiteral(" (line ");
+        string where = file == 0 || file >= Sources.Files.Count ? "" : System.IO.Path.GetFileName(Sources.Files[file]) + " ";
+        EmitPrintLiteral($" ({where}line ");
         _a.MovRR(RDI, R13); _a.CallRel("print_int");
         EmitPrintLiteral(")\n");
         _a.MovRaxImm(1);

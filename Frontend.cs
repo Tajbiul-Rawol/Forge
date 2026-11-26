@@ -334,6 +334,7 @@ sealed class Parser {
             }
         }
     }
+    public HashSet<string> StructNames => _structs;      // shared with the parsers of imported files (Imports.cs)
     bool IsStructName(Tok t) => t.Kind == TokKind.Id && (_structs.Contains(t.Text) || _typeParams.Contains(t.Text));
 
     // Consume one '>' that closes a type-argument list; a '>>' token (List<List<int>>)
@@ -394,7 +395,16 @@ sealed class Parser {
         m.Name = ExpectId().Text;
         while (Accept(TokKind.Op, ".")) m.Name += "." + ExpectId().Text;
         Expect(TokKind.Op, ";");
+        // import "file.fg";  -- the files themselves are loaded by Sources.Load (Imports.cs)
+        while (Cur.Is(TokKind.Id, "import")) {
+            Eat();
+            if (Cur.Kind != TokKind.Str) throw new ForgeException($"import takes a file name in quotes, like  import \"geometry.fg\";  (found '{Cur.Text}')", Cur.Line);
+            Eat();
+            Expect(TokKind.Op, ";");
+        }
         while (Cur.Kind != TokKind.Eof) {
+            if (Cur.Is(TokKind.Id, "import") && Peek().Kind == TokKind.Str)
+                throw new ForgeException("imports must come right after the 'module' line", Cur.Line);
             if (AtKw("struct") || (AtKw("packed") && Peek().Is(TokKind.Kw, "struct"))) ParseStruct(m);
             else if (AtKw("extern") || AtOp("[")) ParseExtern(m);
             else if (Cur.Is(TokKind.Id, "interrupt") && TypeAt(1)) {

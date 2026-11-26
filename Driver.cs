@@ -141,7 +141,7 @@ static class Program {
     // Print collected errors as  file:line: error: message  plus a count line.
     static void PrintErrors(TextWriter w, string path, IEnumerable<Diagnostic> errors) {
         int n = 0;
-        foreach (var e in errors) { w.WriteLine($"{path}:{e.Line}: error: {e.Message}"); n++; }
+        foreach (var e in errors) { w.WriteLine($"{Sources.Loc(e.Line)}: error: {e.Message}"); n++; }
         string more = n >= CodeGen.MaxErrors ? " (stopped after the first " + CodeGen.MaxErrors + ")" : "";
         w.WriteLine($"{path}: {n} error{(n == 1 ? "" : "s")}{more}.");
     }
@@ -185,8 +185,7 @@ static class Program {
         catch (Exception ex) { Console.Error.WriteLine($"cannot read {path}: {ex.Message}"); return 1; }
 
         try {
-            var toks = new Lexer(src).Lex();
-            var mod = new Parser(toks).ParseModule();
+            var mod = Sources.Load(path, src);        // the file and everything it imports (Imports.cs)
             var cg = new CodeGen(mod, target) { OptimizeEnabled = optimize, BoundsChecks = bounds };
             if (interp != null) cg.LinuxInterp = interp;
             var image = cg.LowerToFile();
@@ -196,7 +195,7 @@ static class Program {
                 return 1;
             }
             foreach (var w in cg.Warnings)
-                Console.Error.WriteLine($"{path}:{w.Line}: warning: {w.Message}");
+                Console.Error.WriteLine($"{Sources.Loc(w.Line)}: warning: {w.Message}");
 
             if (target == Target.Linux && !OperatingSystem.IsWindows()) {
                 // mark executable (Windows has no exec bit; run `chmod +x` on the Linux side)
@@ -249,7 +248,7 @@ static class Program {
             }
             return 0;
         } catch (ForgeException fe) {
-            Console.Error.WriteLine($"{path}:{fe.Line}: error: {fe.Message}");
+            Console.Error.WriteLine($"{Sources.Loc(fe.Line)}: error: {fe.Message}");
             return 1;
         } catch (ForgeErrors fes) {
             PrintErrors(Console.Error, path, fes.Errors);
@@ -264,17 +263,17 @@ static class Program {
         catch (Exception ex) { Console.Error.WriteLine($"cannot read {path}: {ex.Message}"); return 1; }
         _currentFile = path;
         try {
-            var mod = new Parser(new Lexer(src).Lex()).ParseModule();
+            var mod = Sources.Load(path, src);
             var cg = new CodeGen(mod, Target.Windows);
             cg.Analyze();                       // type-check + analyses, no codegen
             int warns = cg.Warnings.Count;
             foreach (var w in cg.Warnings)
-                Console.WriteLine($"{path}:{w.Line}: warning: {w.Message}");
+                Console.WriteLine($"{Sources.Loc(w.Line)}: warning: {w.Message}");
             if (warns == 0) Console.WriteLine($"{path}: no problems found.");
             else Console.WriteLine($"{path}: {warns} warning(s), 0 error(s).");
             return 0;
         } catch (ForgeException fe) {
-            Console.WriteLine($"{path}:{fe.Line}: error: {fe.Message}");
+            Console.WriteLine($"{Sources.Loc(fe.Line)}: error: {fe.Message}");
             Console.WriteLine($"{path}: 1 error.");
             return 1;
         } catch (ForgeErrors fes) {
@@ -321,11 +320,11 @@ static class Program {
                 editable[line - 1] = lt.Substring(0, st) + lt.Substring(cc);
             }
             var stripped = string.Join("\n", editable);
-            var mod = new Parser(new Lexer(stripped).Lex()).ParseModule();
+            var mod = Sources.Load(path, stripped);   // imported files' functions are candidates too
             foreach (var f in mod.Funcs) candidates.Add(f.Name);
-            // enclosing function = greatest start line <= cursor line
+            // enclosing function = greatest start line <= cursor line, in this file (file 0)
             Func? enc = null;
-            foreach (var f in mod.Funcs) if (f.Line <= line && (enc == null || f.Line > enc.Line)) enc = f;
+            foreach (var f in mod.Funcs) if (Sources.FileOf(f.Line) == 0 && f.Line <= line && (enc == null || f.Line > enc.Line)) enc = f;
             if (enc != null) {
                 foreach (var (_, n) in enc.Params) candidates.Add(n);
                 CollectLocalsBefore(enc.Body, line, candidates);

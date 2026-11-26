@@ -1,0 +1,5 @@
+module import_syntax;
+
+import helpers;
+
+void Main() { }

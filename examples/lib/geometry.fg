@@ -1,0 +1,21 @@
+module geometry;
+
+import "text.fg";
+
+struct Point { int X; int Y; }
+
+int Dist2(Point a, Point b) {
+    int dx = b.X - a.X;
+    int dy = b.Y - a.Y;
+    return dx * dx + dy * dy;
+}
+
+string Describe(Point p) { return Bracket($"{p.X}, {p.Y}"); }
+
+// the four corners of the box from the origin to p, as x coordinates
+int Corner(Point p, int k) {
+    int[] xs = new int[4];
+    xs[1] = p.X;
+    xs[2] = p.X;
+    return xs[k];
+}

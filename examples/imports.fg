@@ -1,0 +1,18 @@
+module imports;
+
+// A program in three files. lib/geometry.fg and lib/text.fg import each other;
+// both are loaded once. The last call fails a bounds check inside geometry.fg.
+
+import "lib/geometry.fg";
+import "lib/text.fg";
+
+void Main() {
+    Point a = new Point { X = 1, Y = 2 };
+    Point b = new Point { X = 4, Y = 6 };
+    Console.WriteLine(Dist2(a, b));                 // struct and function from geometry.fg
+    Console.WriteLine(Banner("forge"));             // text.fg, which calls back into geometry.fg
+    Console.WriteLine(Pick(false, 3, 9));           // a generic function from text.fg
+    Console.WriteLine(Pick(true, "pear", "apple"));
+    Console.WriteLine(Corner(b, 2));
+    Console.WriteLine(Corner(b, 4));                // out of range: reported in geometry.fg
+}

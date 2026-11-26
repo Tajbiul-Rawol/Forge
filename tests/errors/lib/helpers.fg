@@ -1,0 +1,3 @@
+module helpers;
+
+int Helper() { return 1; }

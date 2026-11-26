@@ -1,0 +1,5 @@
+module import_missing;
+
+import "lib/nope.fg";
+
+void Main() { }
