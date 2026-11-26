@@ -16,7 +16,8 @@ Each item needs its tests in `tests/run.sh` and its documentation in `README.md`
       `tests/errors/syntax_many.fg`, `tests/errors/import_syntax_both.fg`)
 - [x] **4. Debug info.** A compiled program can be stepped through in a debugger (PDB on
       Windows, DWARF on Linux). (`-g`: `DebugInfo.cs`, `Pdb.cs`, `tests/debug/`)
-- [ ] **5. Indexers.** `list[i]` and `dict[key]` on `List<T>` and `Dictionary<K,V>`.
+- [x] **5. Indexers.** `list[i]` and `dict[key]` on `List<T>` and `Dictionary<K,V>`.
+      (`IndexerType` in `CodeGen.cs`, `examples/indexers.fg`, `tests/errors/indexer_misuse.fg`)
 - [ ] **6. README matches the compiler.** Remove stale claims such as "function calls
       (up to 4 parameters)".
 - [ ] **7. Tests stay green.** The suite, the fuzzer and CI pass, with tests for each item

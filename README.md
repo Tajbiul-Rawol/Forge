@@ -48,6 +48,7 @@ forgec/
     ├── bounds_loop.fg <- an off-by-one loop stopped by the bounds check
     ├── imports.fg     <- a program in three files (imports lib/geometry.fg and lib/text.fg)
     ├── debugme.fg     <- the program the debugger tests step through (tests/debug/)
+    ├── indexers.fg    <- list[i], dict[key], compound and nested indexing, a struct indexer
     ├── turing.fg      <- a Turing machine (binary increment) on an array tape
     ├── lowlevel.fg    <- pointers, sized memory access, hex, MMIO-style register writes
     ├── uart.fg        <- a UART serial-port driver (register map, status polling, bit ops)
@@ -477,7 +478,7 @@ void Main() {
 
     var names = new List<string> { };
     names.Add("forge");
-    Console.WriteLine(names.Get(0));
+    Console.WriteLine(names[0]);
 
     var grid = new List<List<int>> { };       // generic types nest
     var p = new Pair<string, double> { key = "pi", value = 3.14 };
@@ -560,11 +561,10 @@ foreach (var n in nums) { Console.WriteLine(n); }           // 1 2 3
 
 var counts = new Dictionary<string, int> { };
 foreach (var w in "the cat and the hat".Split(" ")) {
-    int c = 0;
-    counts.TryGetValue(w, &c);                              // c stays 0 for a new word
-    counts.Set(w, c + 1);
+    if (counts.ContainsKey(w)) { counts[w]++; } else { counts[w] = 1; }
 }
-Console.WriteLine(counts.Get("the"));                       // 2
+Console.WriteLine(counts["the"]);                           // 2
+nums[0] = 10;                                               // indexers, as in C#
 
 var sb = new StringBuilder { };
 foreach (var k in counts.Keys()) { sb.Append(k); sb.Append(" "); }
@@ -582,6 +582,12 @@ Keys can be integers, strings, doubles or struct references (compared by identit
 **`StringBuilder`**: `Append(s)`, `AppendLine(s)`, `Clear()`, `ToString()` and `Length`. Building
 a long string with it is linear; repeated `s = s + t` copies the whole string each time.
 
+**Indexers:** `list[i]`, `list[i] = x`, `dict[key]` and `dict[key] = value` work as in C#,
+including `list[i] += 2`, `dict[key]++`, `pts[0].X = 5` and nested `grid[r][c]`. `x[i]` means
+`x.Get(i)` and `x[i] = v` means `x.Set(i, v)`, so a bad index or a missing key stops the
+program exactly as `Get` does, and `dict[key] = value` adds or replaces. Any struct with
+`Get`/`Set` methods can be indexed the same way (see `examples/indexers.fg`).
+
 **`foreach (var x in coll)`** (or `foreach (T x in coll)`) iterates an array, a `List<T>`, or the
 bytes of a string. `break` and `continue` work as in any loop.
 
@@ -590,9 +596,8 @@ bytes of a string. `break` and `continue` work as in any loop.
 `s.ToUpper()`, `s.ToLower()` (ASCII), `s.Trim()`, `s.Replace(old, new)`, `s.Split(sep)` (a
 `List<string>`). They also work on literals: `"a,b".Split(",")`.
 
-- Where C# would throw (`Get` past the end, a missing key, `Substring` out of range), the
+- Where C# would throw (`list[i]` past the end, a missing key, `Substring` out of range), the
   program prints what went wrong and exits with code 1.
-- C#'s `list[i]` and `dict[key]` indexers aren't available yet: use `Get` / `Set`.
 - Only the parts a program uses are compiled into it. A program that declares its own
   `List`, `Dictionary` or `StringBuilder` uses its own.
 

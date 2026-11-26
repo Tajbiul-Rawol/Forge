@@ -1,0 +1,8 @@
+indexer_misuse.fg:16:17: error: argument 'i': expected long, got string
+indexer_misuse.fg:17:5: error: argument 'x': expected int, got string
+indexer_misuse.fg:18:17: error: argument 'key': expected string, got int
+indexer_misuse.fg:19:15: error: StringBuilder cannot be indexed: it has no Get method
+indexer_misuse.fg:20:5: error: cannot assign to an index of ReadOnly: it has no Set method
+indexer_misuse.fg:21:5: error: initializer of 'd' must be string
+indexer_misuse.fg: 6 errors.
+exit: 1

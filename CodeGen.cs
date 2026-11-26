@@ -607,6 +607,12 @@ sealed partial class CodeGen {
             }
             case IndexExpr ix: {
                 var at = TypeOf(ix.Arr);
+                if (IsStruct(at)) {                     // an indexer: the type of x.Get(i), which checks the index
+                    IndexerType(ix.Arr, "Get", ix.Line);
+                    if (!_indexCalls.TryGetValue(ix, out var call))
+                        _indexCalls[ix] = call = new CallExpr { Line = ix.Line, Name = ".Get", Args = { ix.Arr, ix.Index } };
+                    return TypeOf(call);
+                }
                 if (!IsInt(TypeOf(ix.Index))) throw new ForgeException("index must be an integer", ix.Line);
                 if (IsStr(at)) return "int";        // s[i] -> byte value
                 if (IsArray(at)) return ElemType(at);
@@ -970,7 +976,11 @@ sealed partial class CodeGen {
             }
             case VarDecl v: v.E = LowerExpr(v.E); return v;
             case Assign a: a.E = LowerExpr(a.E); return a;
-            case IndexAssign ia: ia.Arr = LowerExpr(ia.Arr); ia.Index = LowerExpr(ia.Index); ia.E = LowerExpr(ia.E); return ia;
+            case IndexAssign ia: {
+                ia.Arr = LowerExpr(ia.Arr); ia.Index = LowerExpr(ia.Index); ia.E = LowerExpr(ia.E);
+                if (IndexerType(ia.Arr, "Set", ia.Line) == null) return ia;
+                return new ExprStmt { Line = ia.Line, E = new CallExpr { Line = ia.Line, Name = ".Set", Args = { ia.Arr, ia.Index, ia.E } } };
+            }
             case DerefAssign da: da.Ptr = LowerExpr(da.Ptr); da.E = LowerExpr(da.E); return da;
             case IfStmt i: i.Cond = LowerExpr(i.Cond); i.Then = LowerBody(i.Then); if (i.Else != null) i.Else = LowerBody(i.Else); return i;
             case WhileStmt w: w.Cond = LowerExpr(w.Cond); w.Body = LowerBody(w.Body); return w;
@@ -999,8 +1009,33 @@ sealed partial class CodeGen {
         }
         return false;
     }
+    // Indexers: x[i] on a struct is x.Get(i), and x[i] = v is x.Set(i, v) -- so List<T>
+    // and Dictionary<K,V> (and any struct with those methods) index like C#. Returns the
+    // struct type, or null when x is not a struct (an array, pointer or string: indexed
+    // directly; a type error is left for the checker to report).
+    readonly Dictionary<IndexExpr, CallExpr> _indexCalls = new(ReferenceEqualityComparer.Instance);
+    string? IndexerType(Expr obj, string method, int line) {
+        string t;
+        try { t = TypeOf(obj); } catch (ForgeException) { return null; }
+        if (!IsStruct(t)) return null;
+        if (!_funcs.ContainsKey(t + "." + method) && !InstantiateMethod(t, method))
+            throw new ForgeException(method == "Get"
+                ? $"{t} cannot be indexed: it has no Get method"
+                : $"cannot assign to an index of {t}: it has no Set method", line);
+        return t;
+    }
+
     Expr LowerExpr(Expr e) {
         switch (e) {
+            case IndexExpr ix when IndexerType(ix.Arr, "Get", ix.Line) != null: {
+                // the call TypeOf made for this node (an enclosing call may have been typed
+                // through it already), resolved now: nothing types a lowered node again
+                if (!_indexCalls.TryGetValue(ix, out var get))
+                    _indexCalls[ix] = get = new CallExpr { Line = ix.Line, Name = ".Get", Args = { ix.Arr, ix.Index } };
+                get.Args[0] = LowerExpr(ix.Arr); get.Args[1] = LowerExpr(ix.Index);
+                TypeOf(get);
+                return get;
+            }
             case MemberExpr me: {
                 var ot = TypeOf(me.Obj);
                 var obj = LowerExpr(me.Obj);
@@ -1169,6 +1204,7 @@ sealed partial class CodeGen {
                 break;
             case IndexAssign ia: {
                 var at = TypeOf(ia.Arr);
+                if (IsStruct(at)) { IndexerType(ia.Arr, "Set", ia.Line); break; }   // lowering already made it x.Set(i, v)
                 if (!IsInt(TypeOf(ia.Index))) throw new ForgeException("array index must be an integer", ia.Line);
                 string elem = IsArray(at) ? ElemType(at) : IsPtr(at) ? Pointee(at)
                     : throw new ForgeException("indexed assignment to a non-array, non-pointer", ia.Line);

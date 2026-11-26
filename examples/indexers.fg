@@ -1,0 +1,63 @@
+module indexers;
+
+// Indexers: list[i] and dict[key] read and write List<T> and Dictionary<K,V> like C#.
+// x[i] is x.Get(i) and x[i] = v is x.Set(i, v), so the range and key checks still apply.
+
+struct Point { int X; int Y; }
+
+// any struct with Get/Set methods can be indexed too
+struct Grid {
+    int W;
+    int[] Cells;
+    int Get(int i) { return Cells[i]; }
+    void Set(int i, int v) { Cells[i] = v; }
+}
+
+int Total(List<int> xs) {
+    int t = 0;
+    for (int i = 0; i < xs.Count; i++) { t += xs[i]; }
+    return t;
+}
+
+void Main() {
+    var nums = new List<int>();
+    nums.Add(10); nums.Add(20); nums.Add(30);
+    Console.WriteLine(nums[1]);                 // 20
+    nums[1] = 25;
+    nums[2] += 5;                               // compound assignment
+    nums[0]++;
+    Console.WriteLine($"{nums[0]} {nums[1]} {nums[2]}");
+    Console.WriteLine(Total(nums));
+
+    var ages = new Dictionary<string, int>();
+    ages["ada"] = 36;                           // adds
+    ages["alan"] = 41;
+    ages["ada"] = 37;                           // replaces
+    ages["alan"] += 1;
+    Console.WriteLine($"{ages["ada"]} {ages["alan"]} {ages.Count}");
+
+    var words = new List<string>();
+    words.Add("to"); words.Add("be"); words.Add("or"); words.Add("not"); words.Add("to"); words.Add("be");
+    var counts = new Dictionary<string, int>();
+    foreach (var w in words) {
+        if (counts.ContainsKey(w)) { counts[w]++; } else { counts[w] = 1; }
+    }
+    Console.WriteLine($"to={counts["to"]} be={counts["be"]} not={counts["not"]}");
+
+    var pts = new List<Point>();
+    pts.Add(new Point { X = 1, Y = 2 });
+    pts[0].X = 7;                               // a field of an element
+    Console.WriteLine(pts[0].X + pts[0].Y);     // 9
+
+    var rows = new List<List<int>>();
+    rows.Add(new List<int>());
+    rows[0].Add(4);
+    rows[0][0] *= 3;                            // nested
+    Console.WriteLine(rows[0][0]);              // 12
+
+    var g = new Grid { W = 2, Cells = new int[4] };
+    g[3] = 8;
+    Console.WriteLine(g[3] + g[0]);             // 8
+
+    Console.WriteLine(ages["bob"]);             // missing key: stops the program
+}

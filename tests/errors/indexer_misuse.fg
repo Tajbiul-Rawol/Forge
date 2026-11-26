@@ -1,0 +1,22 @@
+module indexer_misuse;
+
+// Indexers are Get/Set calls: their argument types are checked like any call.
+
+struct ReadOnly {
+    int V;
+    int Get(int i) { return V; }
+}
+
+void Main() {
+    var nums = new List<int>();
+    nums.Add(1);
+    var ages = new Dictionary<string, int>();
+    var sb = new StringBuilder();
+    var r = new ReadOnly { V = 3 };
+    int a = nums["first"];
+    nums[0] = "one";
+    int b = ages[7];
+    int c = sb[0];
+    r[0] = 4;
+    string d = nums[0];
+}
