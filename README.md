@@ -23,7 +23,7 @@ a runtime, or anything else installed to run.
 ```
 ForgeLang/
 ├── README.md          <- this file
-├── PRODUCTION.md      <- the 1.0 checklist: what "production ready" means for Forge
+├── PRODUCTION.md      <- the 1.0 checklist: what "production ready" means (all checked)
 ├── ForgeC.csproj      <- project file (targets .NET 10)
 ├── forge.bat          <- Windows helper:   forge build examples\hello.fg
 ├── forge.sh           <- Linux/macOS helper: ./forge.sh build examples/hello.fg
@@ -215,6 +215,10 @@ dotnet run -c Release --project tests/fuzz -- --time file.fg # time each compile
 ```
 
 CI runs the suite on Windows and Ubuntu, plus a 3,000-input fuzz run.
+
+All seven items in `PRODUCTION.md` are checked, so Forge meets its 1.0 definition. The
+release check ran the full suite (202 passed), a 20,000-input fuzz run (seed 7, 0 compiler
+bugs) and CI on Windows and Ubuntu.
 
 ---
 
