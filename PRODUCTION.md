@@ -14,8 +14,8 @@ Each item needs its tests in `tests/run.sh` and its documentation in `README.md`
 - [x] **3. Better errors.** Errors carry line and column, and the parser reports more than
       one syntax error. (`Sources` position table, `Parser.Record`/`Sync`,
       `tests/errors/syntax_many.fg`, `tests/errors/import_syntax_both.fg`)
-- [ ] **4. Debug info.** A compiled program can be stepped through in a debugger (PDB on
-      Windows, DWARF on Linux).
+- [x] **4. Debug info.** A compiled program can be stepped through in a debugger (PDB on
+      Windows, DWARF on Linux). (`-g`: `DebugInfo.cs`, `Pdb.cs`, `tests/debug/`)
 - [ ] **5. Indexers.** `list[i]` and `dict[key]` on `List<T>` and `Dictionary<K,V>`.
 - [ ] **6. README matches the compiler.** Remove stale claims such as "function calls
       (up to 4 parameters)".

@@ -63,13 +63,13 @@ sealed partial class CodeGen {
             int file = Sources.FileOf(s.Line);
             _a.MovRI(RDX, Sources.LineOf(s.Line));
             _a.JmpRel(BoundsFailLabel(file));
-            _boundsFiles.Add(file);
+            _boundsFiles.Add(System.Math.Max(file, 0));
         }
         _boundsStubs.Clear();
     }
 
     // Never returns. rbx/r12/r13 survive print_int and write_out on every target.
-    static string BoundsFailLabel(int file) => file == 0 ? "bounds_fail" : "bounds_fail$" + file;
+    static string BoundsFailLabel(int file) => file <= 0 ? "bounds_fail" : "bounds_fail$" + file;   // -1: compiler-supplied code
     void EmitBoundsFail() { foreach (int f in _boundsFiles) EmitBoundsFail(f); }
     void EmitBoundsFail(int file) {
         _a.Label(BoundsFailLabel(file));
@@ -79,7 +79,7 @@ sealed partial class CodeGen {
         _a.MovRR(RDI, RBX); _a.CallRel("print_int");
         EmitPrintLiteral(" is out of range for an array of length ");
         _a.MovRR(RDI, R12); _a.CallRel("print_int");
-        string where = file == 0 || file >= Sources.Files.Count ? "" : System.IO.Path.GetFileName(Sources.Files[file]) + " ";
+        string where = file <= 0 || file >= Sources.Files.Count ? "" : System.IO.Path.GetFileName(Sources.Files[file]) + " ";
         EmitPrintLiteral($" ({where}line ");
         _a.MovRR(RDI, R13); _a.CallRel("print_int");
         EmitPrintLiteral(")\n");

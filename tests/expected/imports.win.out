@@ -1,0 +1,34 @@
+symbols: pdb
+breakpoint at geometry.fg:9
+breakpoint at Corner
+stopped in Dist2 at geometry.fg:9
+> bt
+#0 Dist2 at geometry.fg:9
+#1 Main at imports.fg:12
+#2 start
+> print a
+a = {X = 1, Y = 2}
+> print b
+b = {X = 4, Y = 6}
+> print dx
+dx = 3
+> continue
+25
+== forge at (0, 0) ==
+9
+pear
+stopped in Corner at geometry.fg:17
+> bt
+#0 Corner at geometry.fg:17
+#1 Main at imports.fg:16
+#2 start
+> print k
+k = 2
+> finish
+returned 4
+stopped in Main at imports.fg:16
+> continue
+4
+Index 4 is out of range for an array of length 4 (geometry.fg line 20)
+exited with code 1
+exit: 0

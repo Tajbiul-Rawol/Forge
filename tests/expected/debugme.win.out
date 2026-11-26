@@ -1,0 +1,42 @@
+symbols: pdb
+breakpoint at debugme.fg:10
+breakpoint at SumTo
+stopped in Area at debugme.fg:10
+> bt
+#0 Area at debugme.fg:10
+#1 Main at debugme.fg:29
+#2 start
+> print scale
+scale = 2
+> print w
+w = 6
+> print p
+p = {X = 3, Y = 4}
+> continue
+stopped in SumTo at debugme.fg:15
+> next
+stopped in SumTo at debugme.fg:16
+> next
+stopped in SumTo at debugme.fg:17
+> next
+stopped in SumTo at debugme.fg:16
+> locals
+n = 4
+total = 1
+i = 1
+> finish
+returned 10
+stopped in Main at debugme.fg:30
+> print a
+a = 48
+> print name
+name = "forge"
+> print ratio
+ratio = 2.5
+> print ok
+ok = true
+> continue
+58
+forge 2.5
+exited with code 0
+exit: 0

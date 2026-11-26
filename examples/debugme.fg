@@ -1,0 +1,33 @@
+module debugme;
+
+// The program the debug-info tests step through (tests/debug/): parameters, locals of
+// several types, a struct, an array, a loop and a call chain.
+
+struct Point { int X; int Y; }
+
+int Area(Point p, int scale) {
+    int w = p.X * scale;
+    int h = p.Y * scale;
+    return w * h;
+}
+
+int SumTo(int n) {
+    int total = 0;
+    for (int i = 1; i <= n; i++) {
+        total += i;
+    }
+    return total;
+}
+
+void Main() {
+    Point p = new Point { X = 3, Y = 4 };
+    int[] squares = new int[3];
+    squares[2] = 9;
+    string name = "forge";
+    double ratio = 2.5;
+    bool ok = true;
+    int a = Area(p, 2);
+    int s = SumTo(4);
+    Console.WriteLine(a + s);
+    if (ok) { Console.WriteLine($"{name} {ratio}"); }
+}

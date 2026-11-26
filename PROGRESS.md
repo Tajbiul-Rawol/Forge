@@ -18,6 +18,8 @@ bare-metal software (OSes, firmware).
 | `CodeGen.cs` | Type checker, struct lowering, code generator, register allocator, runtime routines, PE/ELF/kernel layout |
 | `Optimizer.cs` | Tail-recursion elimination, inlining (2 rounds), partial inlining, constant folding, loop-invariant `.length` hoisting; `Walker`, `AstCopier` |
 | `Imports.cs` | Multi-file programs: `Sources.Load` follows `import "x.fg";`, `Sources` position table (file, line, col per token); `Sources.Loc` prints file:line:col |
+| `DebugInfo.cs` | `-g`: the debug model (line rows, functions, frames, variables, types) and the DWARF writer |
+| `Pdb.cs` | `-g` on Windows: unwind info + debug directory in the .exe, and the PDB (MSF, TPI, DBI, module, GSI/PSI) |
 | `BoundsCheck.cs` | Array bounds checks: the inline compare, cold stubs, `bounds_fail` |
 | `Threads.cs` | spawn/join, per-thread arenas, region cache, atomics, SRWLOCK/futex lock, `heapmark` support (`arena_reset_to`) |
 | `InlineAsm.cs` | The `asm("...")` mini assembler (Intel syntax) |
@@ -108,6 +110,14 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - `switch` becomes `VarDecl sw$N = subject` (skipped for a plain variable) plus an if/else-if chain; default is the final else. Constant labels only, duplicates and fall-through are errors (C# rules).
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
+
+### Session: debug info, -g (2026-11-26)
+- Model (`DebugInfo.cs`): `DbgRow` at each `EmitStmt` and before loop tests (deduped per source line), `DbgFuncStart/BodyStart/End` in `EmitFunc` (range, frame size, saved registers, `_locals` with slots; register-allocated or frameless variables marked InReg = optimized out; `$` temps and runtime functions left out). Runtime/stdlib sources are lexed as `Sources.NoFile` (-1), so inlined runtime code adds no rows.
+- Linux: `DwarfSections` writes DWARF 4: abbrev, info (CU, base/pointer/struct types with members, subprograms with `DW_OP_fbreg` locals, frame base rbp), line program (file/line/column, a line-0 row after each function), `.debug_frame` (CIE + an FDE per function: push rbp / mov rbp,rsp / saved-register slots; frameless pushes). `Elf.Build` appends them with a section header table and `.symtab` (only with -g).
+- Windows (`Pdb.cs`): after the code in .text, UNWIND_INFO (PUSH_NONVOL rbp, SET_FPREG, ALLOC) + RUNTIME_FUNCTION per function (data dir 3) and a debug directory + RSDS (data dir 6); the layout is re-planned for the longer .text. The PDB: MSF 7.0 with info (GUID = SHA-256 of the code, "/names"), TPI (fwd-ref structs, LF_POINTER, field lists, LF_PROCEDURE; hash stream with hashStringV1 / CRC), DBI (one module, section contributions, section map, file info, section-header stream), the module stream (S_OBJNAME, S_COMPILE3, S_GPROC32, S_FRAMEPROC, S_REGREL32 [rbp+off] or S_LOCAL optimized-out, S_END; C13 FILECHKSMS + LINES), GSI/PSI hashes with S_PROCREF / S_PUB32 records.
+- Tests: mode `debug` in `tests/run.sh` (`examples/debugme.fg`, `imports`): gdb scripts `tests/debug/*.gdb` (natively, or `FORGE_GDB_DOCKER=forge-gdb` from `tests/debug/Dockerfile`), and on Windows `tests/debug/dbgtest` (Win32 debug API + dbghelp: breakpoints by line/name, StackWalk64, locals via SymEnumSymbols + SymGetTypeInfo, next, finish) running `tests/debug/*.win`. CI installs gdb on Ubuntu.
+- Without -g all 82 example binaries are byte-identical to main (stdlib generic instances' bounds checks share `bounds_fail`).
+- Not done: -g for the kernel target; block scopes; at -O2, register variables are optimized out and frameless functions' CFI ignores temporary pushes.
 
 ### Session: better errors (2026-11-26)
 - Positions: a node's `Line` is now a position id, an index into `Sources`' table of (file, line, column), one entry per token (`Lexer.P()`, `_tokStart`/`_lineStart`). This replaced the `file << 20` line encoding from the imports session. Every node and every inlined or generic copy carries its column with no parser changes. Interpolation holes are lexed with the string's file/line and its column + offset. Errors print `file:line:col`; errors are sorted with `Sources.Order` (ids aren't in source order: hole tokens are lexed later). `Sources.Reset()` per compile (the fuzzer calls it; access is locked because a timed-out fuzz compile may still run).

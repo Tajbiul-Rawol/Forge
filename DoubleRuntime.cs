@@ -169,7 +169,7 @@ string __dtoaf(double x, long places) {
 
     public static void Inject(ModuleNode m) {
         if (m.Funcs.Any(f => f.Name == "__dtoa")) return;
-        var rt = new Parser(new Lexer(Prelude).Lex()).ParseModule();
+        var rt = new Parser(new Lexer(Prelude, Sources.NoFile).Lex()).ParseModule();
         foreach (var f in rt.Funcs) { f.IsRuntime = true; f.Line = 0; m.Funcs.Add(f); }
     }
 }

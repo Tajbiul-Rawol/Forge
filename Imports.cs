@@ -22,6 +22,7 @@ namespace ForgeC;
 // Sources.Loc(id) prints "file:line:col". Id 0 means "no position".
 static class Sources {
     public static readonly List<string> Files = new();       // display path, by file number
+    public const int NoFile = -1;                            // compiler-supplied source (runtime, standard library)
     static readonly List<(int File, int Line, int Col)> _pos = new() { (0, 0, 0) };
 
     // locked: the fuzzer may still have a timed-out compile running on another thread
@@ -34,7 +35,7 @@ static class Sources {
     public static (int, int, int) Order(int id) => At(id);
     public static string Loc(int id) {
         var (f, l, c) = At(id);
-        string file = f < Files.Count ? Files[f] + ":" : "";
+        string file = f >= 0 && f < Files.Count ? Files[f] + ":" : "";
         return c > 0 ? $"{file}{l}:{c}" : $"{file}{l}";
     }
     // a fresh table (one per compile; the fuzzer compiles thousands of programs)

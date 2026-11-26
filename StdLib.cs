@@ -901,7 +901,7 @@ List<string> __str_split(string s, string sep) {
 
         bool anyLib = wantTypes.Count > 0 || wantFns.Any(n => n.StartsWith("__math_") || n.StartsWith("__str_") || n == "__sqrt");
         if (!anyLib) return;
-        var libMods = new[] { MathSource, CollectionsSource }.Select(src => new Parser(new Lexer(src).Lex()).ParseModule()).ToList();
+        var libMods = new[] { MathSource, CollectionsSource }.Select(src => new Parser(new Lexer(src, Sources.NoFile).Lex()).ParseModule()).ToList();
         var libFuncs = libMods.SelectMany(x => x.Funcs).Where(f => f.GenericOwner == null && !f.Name.Contains('.')).ToDictionary(f => f.Name);
         var libStructs = libMods.SelectMany(x => x.Structs).ToDictionary(s => s.Name);
         var libMethods = libMods.SelectMany(x => x.Funcs).Where(f => f.GenericOwner != null || f.Name.Contains('.')).ToList();
