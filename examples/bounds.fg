@@ -1,0 +1,43 @@
+module bounds;
+
+// Array bounds checks: every in-range access below must work at -O2 and -O0,
+// and the last statement must stop the program with an out-of-range report.
+
+struct Point { int X; int Y; }
+
+int Sum(int[] a) {
+    int s = 0;
+    for (int i = 0; i < a.length; i++) { s += a[i]; }
+    return s;
+}
+
+int Neighbours(int[] a, int i) { return a[i - 1] + a[i] + a[i + 1]; }
+
+int Pick(int[] a) { return a[0] + a[a.length - 1]; }
+
+void Main() {
+    int[] a = new int[5];
+    for (int i = 0; i < a.length; i++) { a[i] = i * 10; }
+    Console.WriteLine(Sum(a));               // 100
+    Console.WriteLine(Neighbours(a, 2));     // 60
+    Console.WriteLine(Pick(a));              // 40
+    a[4] = 99;                               // constant index
+    Console.WriteLine(a[4]);
+    int k = 1;
+    a[k + 2] = a[k] + a[k + 1];              // folded displacements on both sides
+    Console.WriteLine(a[3]);                 // 30
+    a[Pick(a) - 99] = 5;                     // index computed by a call
+    Console.WriteLine(a[0]);
+
+    Point[] ps = new Point[2];
+    ps[1] = new Point { X = 3, Y = 4 };
+    Console.WriteLine(ps[1].X + ps[1].Y);    // 7
+
+    int total = 0;
+    foreach (var x in a) { total += x; }
+    Console.WriteLine(total);
+
+    int i = 2;
+    a[i - 5] = 1;                            // index -3: out of range
+    Console.WriteLine("not reached");
+}

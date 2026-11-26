@@ -16,6 +16,8 @@
 # On Windows, linux targets are build-only. On Linux, win targets are build-only.
 
 arrays          win,linux   run
+bounds          win,linux   run
+bounds_loop     win,linux   run
 async           win,linux   run
 bench_fib       win,linux   run
 features        win,linux   run
@@ -53,5 +55,6 @@ redis           win,linux   build
 kernel          kernel      boot
 kernel_fib      kernel      boot
 kernel_os       kernel      boot
+bounds_loop     kernel      boot
 
 typos           -           check

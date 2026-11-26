@@ -17,6 +17,7 @@ bare-metal software (OSes, firmware).
 | `Frontend.cs` | Lexer, AST, parser (structs, methods, extern, interrupt, asm), and `MethodScope`, which rewrites bare field names inside methods to `this.field` |
 | `CodeGen.cs` | Type checker, struct lowering, code generator, register allocator, runtime routines, PE/ELF/kernel layout |
 | `Optimizer.cs` | Tail-recursion elimination, inlining (2 rounds), partial inlining, constant folding, loop-invariant `.length` hoisting; `Walker`, `AstCopier` |
+| `BoundsCheck.cs` | Array bounds checks: the inline compare, cold stubs, `bounds_fail` |
 | `Threads.cs` | spawn/join, per-thread arenas, region cache, atomics, SRWLOCK/futex lock, `heapmark` support (`arena_reset_to`) |
 | `InlineAsm.cs` | The `asm("...")` mini assembler (Intel syntax) |
 | `AsyncRuntime.cs` | async/await scheduler (written in Forge, injected) |
@@ -106,6 +107,12 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - `switch` becomes `VarDecl sw$N = subject` (skipped for a plain variable) plus an if/else-if chain; default is the final else. Constant labels only, duplicates and fall-through are errors (C# rules).
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
+
+### Session: array bounds checks (2026-11-26)
+- `BoundsCheck.cs`: every array `a[i]` / `a[i] = v` is checked. The hot path is `cmp idx, [arr-8]` + `jae` (unsigned, so negative indexes fail too) with no scratch register; `a[i+k]` adds k to the index register around the compare, a constant index compares the length with an immediate. Each site has a cold stub after its function (push index, push length, line in rdx) that jumps to the shared `bounds_fail`, which prints `Index i is out of range for an array of length n (line L)` and exits 1. Runtime (`IsRuntime`) code, pointers and strings are not checked. `--no-bounds-check` turns it off.
+- JSON benchmark: 595 ms checked vs 576 ms unchecked (best of 10 on a noisy machine), output unchanged.
+- Fixed on the way: `NewLabel` glued the prefix to a global counter, so `or1`+86 and `or`+186 were both `.or186` (dup label crash in collections.fg at -O0 once the counter shifted). Labels are now `.prefix#N`.
+- New: `examples/bounds.fg`, `examples/bounds_loop.fg`; `PRODUCTION.md` (the 1.0 checklist).
 
 ### Session: collections and strings (2026-11-26)
 - `StdLib.CollectionsSource` (Forge): `List<T>`, `Dictionary<K,V>` (open addressing, linear probing, tombstones), `StringBuilder`, string methods (`__str_*`), `__fail` (print + exit 1). `__hash(x)` / `__less(a,b)` in the library are resolved by argument type (`ResolveLibDispatch`); `s.Name(..)` on a string by `ResolveStringMethod`.
