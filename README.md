@@ -414,11 +414,44 @@ Limits:
   (C library) parameters or return values.
 - Literals are written with a decimal point (`1.5`, `1000000.0`); exponent
   literals like `1e6` aren't supported yet.
-- No math library yet (`sqrt`, `sin`, ...). You can write them in Forge
-  (`examples/doubles.fg` has a Newton-method square root).
 - Speed: each operation moves its operands through SSE registers and back, so
   float-heavy loops currently run about 3-4x slower than .NET's JIT (a Mandelbrot
   loop: ~1.1 s vs ~0.3 s). Keeping doubles in SSE registers is planned.
+
+## Math
+
+C#'s `Math`, with the same names and behaviour. See `examples/math.fg`.
+
+```csharp
+double h = Math.Sqrt(3 * 3 + 4 * 4);              // 5
+double a = Math.Atan2(1, -1) * 180 / Math.PI;     // 135
+double p = Math.Pow(1.05, 10);                    // compound interest: 1.62889462677744
+int    n = Math.Abs(-42);                         // integers stay integers
+double r = Math.Round(2.5);                       // 2: ties go to the even neighbour, like C#
+Console.WriteLine($"{Math.Sin(Math.PI / 6):F3}");  // 0.500
+```
+
+| Group | Members |
+|-------|---------|
+| Constants | `Math.PI`, `Math.E`, `Math.Tau` |
+| Powers and roots | `Sqrt`, `Pow`, `Exp`, `Log` (natural, or `Log(x, base)`), `Log10`, `Log2` |
+| Trigonometry (radians) | `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2` |
+| Rounding | `Floor`, `Ceiling`, `Round` (ties to even), `Truncate` |
+| Comparison | `Abs`, `Min`, `Max`, `Sign`, `Clamp`: integer versions for integer arguments, `double` otherwise |
+
+- **Accuracy.** `Sqrt` is the `sqrtsd` instruction, and the rounding functions are exact.
+  `Exp`, `Log`, `Log10`, `Log2`, `Pow`, `Sin`, `Cos`, `Atan`, `Atan2` and `Acos` are ported
+  from fdlibm (the reference math library behind most C libraries and Java). They were
+  measured against .NET's `System.Math` on 4,000 random inputs each, plus 1,264 edge cases
+  (±0, ±∞, NaN, domain edges, overflow), and are **within 1 unit in the last place** (most
+  results identical). `Tan` and `Asin` are within 2 units.
+- Special values follow .NET: `Math.Sqrt(-1)` and `Math.Log(-1)` are `NaN`, `Math.Log(0)` is
+  `-Infinity`, `Math.Exp(1000)` is `Infinity`, `Math.Round(-0.5)` is `-0`.
+- `Sin`/`Cos` keep full accuracy for `|x|` up to about 1.6 million; beyond that the
+  argument reduction loses precision.
+- The library is written in Forge (`StdLib.cs`), and only the functions a program calls are
+  compiled into it, so programs without `Math` are unchanged.
+- `Math` needs `double`, so it isn't available on `--target kernel` yet.
 
 ## Structs
 

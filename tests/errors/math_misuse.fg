@@ -1,0 +1,9 @@
+// Math members are checked: unknown names (with a suggestion), argument counts and types.
+module m;
+
+void Main() {
+    double a = Math.Sqroot(2);
+    double b = Math.Pow(2);
+    double c = Math.Sin("x");
+    double d = Math.Max(1, 2, 3);
+}

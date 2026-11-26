@@ -1,0 +1,46 @@
+module math;
+
+// The Math library: C#'s names and behaviour. Results match .NET's System.Math to
+// within one unit in the last place (Sqrt, Floor, Round, ... exactly).
+
+double Hypot(double a, double b) { return Math.Sqrt(a * a + b * b); }
+
+void Main() {
+    // constants
+    Console.WriteLine($"PI = {Math.PI}, E = {Math.E}, Tau = {Math.Tau}");
+
+    // roots and powers
+    Console.WriteLine($"Sqrt(2) = {Math.Sqrt(2)}, Hypot(3, 4) = {Hypot(3, 4)}");
+    Console.WriteLine($"Pow(2, 10) = {Math.Pow(2, 10)}, Pow(2, 0.5) = {Math.Pow(2, 0.5)}, Pow(10, -3) = {Math.Pow(10, -3)}");
+
+    // exponentials and logarithms
+    Console.WriteLine($"Exp(1) = {Math.Exp(1)}, Log(E) = {Math.Log(Math.E)}, Log(8, 2) = {Math.Log(8, 2)}");
+    Console.WriteLine($"Log10(1000) = {Math.Log10(1000)}, Log2(1024) = {Math.Log2(1024)}");
+
+    // trigonometry (radians)
+    double deg = Math.PI / 180;
+    Console.WriteLine($"Sin(30 deg) = {Math.Sin(30 * deg):F12}, Cos(60 deg) = {Math.Cos(60 * deg):F12}, Tan(45 deg) = {Math.Tan(45 * deg):F12}");
+    Console.WriteLine($"Atan2(1, -1) = {Math.Atan2(1, -1)} rad = {Math.Atan2(1, -1) / deg} deg");
+    Console.WriteLine($"Asin(1) = {Math.Asin(1)}, Acos(-1) = {Math.Acos(-1)}");
+
+    // rounding: Round goes to the even neighbour on a tie, like C#
+    Console.WriteLine($"Floor(-2.5) = {Math.Floor(-2.5)}, Ceiling(-2.5) = {Math.Ceiling(-2.5)}, Truncate(-2.5) = {Math.Truncate(-2.5)}");
+    Console.WriteLine($"Round(2.5) = {Math.Round(2.5)}, Round(3.5) = {Math.Round(3.5)}, Round(-0.5) = {Math.Round(-0.5)}");
+
+    // Abs / Min / Max / Sign / Clamp keep integers integral
+    int i = Math.Abs(-42);
+    long biggest = Math.Max(17, 99);
+    Console.WriteLine($"Abs(-42) = {i}, Max(17, 99) = {biggest}, Min(2.5, -1) = {Math.Min(2.5, -1)}");
+    Console.WriteLine($"Sign(-7.5) = {Math.Sign(-7.5)}, Clamp(150, 0, 100) = {Math.Clamp(150, 0, 100)}");
+
+    // special values
+    double zero = 0;
+    Console.WriteLine($"Sqrt(-1) = {Math.Sqrt(-1)}, Log(0) = {Math.Log(zero)}, Exp(1000) = {Math.Exp(1000)}");
+
+    // a little physics: how far does a ball thrown at 20 m/s and 35 degrees fly?
+    double v = 20;
+    double angle = 35 * deg;
+    double g = 9.81;
+    double range = v * v * Math.Sin(2 * angle) / g;
+    Console.WriteLine($"range = {range:F2} m, peak = {Math.Pow(v * Math.Sin(angle), 2) / (2 * g):F2} m");
+}

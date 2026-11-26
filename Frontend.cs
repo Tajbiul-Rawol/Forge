@@ -968,6 +968,19 @@ sealed class Parser {
             }
             Eat(); var e = ParseExpr(); Expect(TokKind.Op, ")"); return Postfix(e);
         }
+        // Math.Sqrt(x) -> a call named "Math.Sqrt" (the standard library); Math.PI -> a constant
+        if (t.Is(TokKind.Id, "Math") && !_structs.Contains("Math") && Peek(1).Is(TokKind.Op, ".") && Peek(2).Kind == TokKind.Id) {
+            string member = Peek(2).Text;
+            double? constant = member switch { "PI" => Math.PI, "E" => Math.E, "Tau" => 2 * Math.PI, _ => null };
+            if (constant != null && !Peek(3).Is(TokKind.Op, "(")) { _i += 3; return Postfix(new FloatLit { Line = t.Line, Val = constant.Value }); }
+            if (Peek(3).Is(TokKind.Op, "(")) {
+                _i += 4;
+                var margs = new List<Expr>();
+                if (!AtOp(")")) do { margs.Add(ParseExpr()); } while (Accept(TokKind.Op, ","));
+                Expect(TokKind.Op, ")");
+                return Postfix(new CallExpr { Line = t.Line, Name = "Math." + member, Args = margs });
+            }
+        }
         if (t.Kind == TokKind.Id) {
             string name = Eat().Text;
             // Max<int>(a, b): explicit type arguments. Tried speculatively (only for

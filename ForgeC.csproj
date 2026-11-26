@@ -23,6 +23,7 @@
     <Compile Include="AsyncRuntime.cs" />
     <Compile Include="DoubleRuntime.cs" />
     <Compile Include="Generics.cs" />
+    <Compile Include="StdLib.cs" />
     <Compile Include="Pe.cs" />
     <Compile Include="Elf32.cs" />
     <Compile Include="Driver.cs" />

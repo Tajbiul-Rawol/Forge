@@ -1,0 +1,6 @@
+math_misuse.fg:5: error: Math has no member 'Sqroot' (did you mean 'Sqrt'?)
+math_misuse.fg:6: error: Math.Pow takes 2 argument(s), got 1
+math_misuse.fg:7: error: Math.Sin takes numbers, got string
+math_misuse.fg:8: error: Math.Max takes 2 argument(s), got 3
+math_misuse.fg: 4 errors.
+exit: 1
