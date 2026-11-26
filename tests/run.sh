@@ -291,6 +291,18 @@ void Main() { double x = 1.5; }
     cli_case "-g on bare metal"    2 "-g is not supported for --target kernel"  build ok.fg --target kernel -g
 fi
 
+# README: every example and every compiler source file appears in its file tree, so the
+# tree can't silently fall behind the repository.
+if [ ${#ONLY[@]} -eq 0 ]; then
+    missing=""
+    for f in "$ROOT"/examples/*.fg; do grep -q "── $(basename "$f")" "$ROOT/README.md" || missing="$missing $(basename "$f")"; done
+    for f in $(grep -o 'Compile Include="[^"]*"' "$ROOT/ForgeC.csproj" | cut -d'"' -f2); do
+        grep -q "── $f" "$ROOT/README.md" || missing="$missing $f"
+    done
+    if [ -z "$missing" ]; then pass "README lists every example and source file"
+    else fail "README lists every example and source file" "missing from the file tree:$missing"; fi
+fi
+
 echo
 echo "== $PASS passed, $FAIL failed"
 if [ $FAIL -gt 0 ]; then printf '   %s\n' "${FAILED[@]}"; exit 1; fi

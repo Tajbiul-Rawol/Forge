@@ -5,11 +5,13 @@ transpilation, no gcc, no assembler, no linker, no LLVM. The code generator
 picks x86-64 machine instructions and writes their opcode bytes by hand, and the
 driver writes the finished executable file itself.
 
-- **Windows (default):** emits a PE32+ `.exe` that calls `GetStdHandle`,
-  `WriteFile`, and `ExitProcess` from `kernel32.dll` through a hand-built PE
-  import table.
-- **Linux:** emits a static ELF64 binary that makes raw `write`/`exit` syscalls
-  (pass `--target linux`).
+- **Windows (default):** emits a PE32+ `.exe` that calls `kernel32.dll` (and `ws2_32.dll`
+  for sockets, plus any DLL the program declares `extern`) through a hand-built import table.
+- **Linux:** emits an ELF64 binary that makes raw syscalls, with no libc (pass
+  `--target linux`). It is static, unless the program calls C functions (`extern`),
+  which makes it dynamically linked.
+- **Bare metal:** `--target kernel` emits a Multiboot image that boots in QEMU with no
+  operating system.
 
 The produced `.exe` is a standalone native binary — it does **not** need .NET,
 a runtime, or anything else installed to run.
@@ -19,7 +21,7 @@ a runtime, or anything else installed to run.
 ## What's in this folder
 
 ```
-forgec/
+ForgeLang/
 ├── README.md          <- this file
 ├── PRODUCTION.md      <- the 1.0 checklist: what "production ready" means for Forge
 ├── ForgeC.csproj      <- project file (targets .NET 10)
@@ -27,9 +29,13 @@ forgec/
 ├── forge.sh           <- Linux/macOS helper: ./forge.sh build examples/hello.fg
 │
 ├── Frontend.cs        <- lexer, AST, parser
+├── Diagnostics.cs     <- "did you mean?" suggestions, completion ranking
 ├── Asm.cs             <- x86-64 instruction encoder (opcode bytes + label fixups)
 ├── CodeGen.cs         <- type checker + machine-code generation + register allocator
 ├── Optimizer.cs       <- inlining, tail-recursion elimination, partial inlining, folding
+├── Generics.cs        <- generic functions and structs (one compiled copy per type argument)
+├── StdLib.cs          <- the standard library, in Forge: Math, List, Dictionary, StringBuilder, strings
+├── DoubleRuntime.cs   <- double -> text (Forge source, added only to programs that use double)
 ├── BoundsCheck.cs     <- array bounds checks (inline compare + out-of-line error report)
 ├── Imports.cs         <- multi-file programs: import "file.fg", file:line:col positions
 ├── DebugInfo.cs       <- -g: line tables, functions, variables; DWARF for Linux
@@ -39,14 +45,28 @@ forgec/
 ├── AsyncRuntime.cs    <- async/await: coroutine scheduler (written in Forge) + docs
 ├── Pe.cs              <- PE32+ writer: import tables for kernel32, ws2_32 and extern DLLs (Windows)
 ├── Driver.cs          <- CLI, target selection, and the ELF writer (Linux, static or dynamic)
+├── Elf32.cs           <- the Multiboot ELF32 image for --target kernel
+│
+├── tests/             <- run.sh (the regression suite), manifest, expected output, the fuzzer,
+│                         kernel boot scripts, debugger scripts and the Windows debugger harness
+├── benchmarks/        <- Forge against C, C++, Rust, Go and C# (see benchmarks/README.md)
 │
 └── examples/
     ├── hello.fg       <- minimal program
     ├── features.fg    <- errors, recursion, while loops, boolean logic
     ├── arrays.fg      <- heap arrays: sieve of Eratosthenes + sums
+    ├── control_flow.fg <- += and friends, ++/--, break, continue, switch
+    ├── strings.fg     <- runtime strings: concat, length, indexing, compare, str(), toint()
+    ├── interp_strings.fg <- $"..." holes holding string literals, braces and colons
+    ├── doubles.fg     <- double: arithmetic, comparisons, conversions, printing
+    ├── math.fg        <- the Math library (Sqrt, Pow, Sin, Atan2, Round, ...)
+    ├── generics.fg    <- generic functions and structs, type inference
+    ├── collections.fg <- List<T>, Dictionary<K,V>, StringBuilder, foreach, string methods
+    ├── many_params.fg <- functions with more than 4 parameters (passed on the stack)
     ├── bounds.fg      <- array bounds checks (ends with an out-of-range store)
     ├── bounds_loop.fg <- an off-by-one loop stopped by the bounds check
     ├── imports.fg     <- a program in three files (imports lib/geometry.fg and lib/text.fg)
+    ├── lib/           <- geometry.fg, text.fg: the files imports.fg uses
     ├── debugme.fg     <- the program the debugger tests step through (tests/debug/)
     ├── indexers.fg    <- list[i], dict[key], compound and nested indexing, a struct indexer
     ├── turing.fg      <- a Turing machine (binary increment) on an array tape
@@ -62,16 +82,25 @@ forgec/
     ├── opt_test.fg    <- optimizer edge cases (output must match a -O0 build)
     ├── structs.fg     <- structs: fields, methods, initializers, linked lists, packed layouts
     ├── memory.fg      <- arenas: heapmark/heapreset(mark), whole-file readfile
+    ├── fileio.fg      <- writefile / readfile
+    ├── io_errors.fg   <- ioerr() and try on I/O builtins
+    ├── http_server.fg <- a tiny HTTP server
+    ├── tcp_client.fg  <- a TCP client (talks to an echo server on port 9099)
+    ├── web_client.fg  <- an HTTP client using async/await
+    ├── web_get.fg     <- fetches real websites over plain HTTP with async/await
+    ├── redis.fg       <- a Redis client speaking the RESP protocol
+    ├── mytest.fg      <- the smallest async/await program
     ├── ffi.fg         <- calling C (Windows DLLs), [DllImport], a qsort callback
     ├── ffi_linux.fg   <- calling libc on Linux (dynamically linked)
+    ├── ffi_glibc.fg   <- a harder libc workout: 10-argument snprintf, qsort, printf from a thread
     ├── window.fg      <- a native Windows GUI window: Win32 structs + a Forge WndProc
     ├── inline_asm.fg  <- asm("...") with {variable} operands
     ├── kernel_os.fg   <- a tiny OS: IDT, exceptions, PIT timer, PS/2 keyboard, paging, shell
     └── typos.fg       <- deliberately broken: demo for `check` and "did you mean?""
 ```
 
-A prebuilt `forgec.dll` is also included under `bin/Release/net10.0/` so you can
-skip the build step if you like. Building from source is recommended.
+Build the compiler once with `dotnet build -c Release` (see the quick starts); it
+writes `bin/Release/net10.0/forgec.dll`. The repository does not include a prebuilt copy.
 
 ---
 
@@ -171,7 +200,8 @@ tests/run.sh --update hello           # accept new output as the baseline
 ```
 
 Use Git Bash on Windows. `tests/manifest.txt` lists every example and whether it is run,
-only built, booted in QEMU (kernel examples), or expected to fail `forgec check`. Each file in `tests/errors/` must fail
+only built, booted in QEMU (kernel examples), run against glibc, or stepped through a
+debugger (`-g`, see "Debugging"). Each file in `tests/errors/` must fail
 `forgec check` with exactly the diagnostics in `tests/expected/<name>.check`. The suite
 also checks command-line handling (exit codes, no stack traces).
 
@@ -191,7 +221,7 @@ CI runs the suite on Windows and Ubuntu, plus a 3,000-input fuzz run.
 ## Command reference
 
 ```
-dotnet bin/Release/net10.0/forgec.dll <build|run> <file.fg> [-o output] [--target win|linux|kernel] [-O0] [-g] [--no-bounds-check]
+dotnet bin/Release/net10.0/forgec.dll <build|run> <file.fg> [-o output] [--target win|linux|kernel] [-O0] [-g] [--no-bounds-check] [--interp path]
 dotnet bin/Release/net10.0/forgec.dll check    <file.fg>
 dotnet bin/Release/net10.0/forgec.dll complete <file.fg> <line> <col>
 ```
@@ -211,6 +241,8 @@ dotnet bin/Release/net10.0/forgec.dll complete <file.fg> <line> <col>
   or a `.pdb` next to a Windows `.exe`. Combine with `-O0` to see every variable.
 - `--no-bounds-check` — compile array indexing without bounds checks (see
   "Array bounds checks" below). Only for code that is already known to be correct.
+- `--interp path` — the dynamic loader of a Linux program that calls C (`extern`); the
+  default is glibc's `/lib64/ld-linux-x86-64.so.2` (see "Calling C libraries").
 
 **Errors and exit codes.** Problems are printed as `file:line:col: error: message`
 (columns count from 1, as in gcc and clang, so editors can jump to them). `forgec`
@@ -283,7 +315,9 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
 - `if` / `else`, `while`, `return`
 - arithmetic `+ - * / %`, comparison `< > <= >= == !=`, logical `&& || !`
   (conditions must be `bool`, exactly like C#)
-- function calls (up to 4 parameters). A program's own function may reuse a
+- functions with any number of parameters (the first 4 are passed in registers, the
+  rest on the stack; `async` functions and C-callable `extern` functions take at most 4).
+  Arguments are evaluated left to right, as in C#. A program's own function may reuse a
   builtin's name (e.g. its own `send`): the program's function wins
 - arrays: `int[] a = new int[n];`, element read/write `a[i]` / `a[i] = v`,
   and `a.length` (heap-backed, so the language is Turing complete). Every array
@@ -309,8 +343,8 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
 - casts `(T)expr` including integer->pointer, the basis for memory-mapped I/O
 - hex literals (`0xDEADBEEF`), bitwise ops `& | ^ << >>`, `malloc(n)` for raw
   heap bytes, and `putc(ch)` to emit one byte to stdout
-- `Console.WriteLine("text")`, `Console.WriteLine(intExpr)`, and `$"..."`
-  string literals with `{expr}` holes; a hole can hold any expression, including
+- `Console.WriteLine(x)` for strings, integers, doubles and bools (a `bool` prints as `1`
+  or `0`, not C#'s `True`/`False`), and `$"..."` string literals with `{expr}` holes; a hole can hold any expression, including
   string literals and nested `$"..."` (`$"file: {readfile("a.txt")}"`). As in C#, the
   whole string is built before `Console.WriteLine` prints any of it, so output from a
   function called in a hole comes first
@@ -346,10 +380,16 @@ Rules for the new statement forms:
 - Functions that use `break` or `continue` are not inlined by the optimizer (they
   still compile to tight loops).
 
-### Not implemented yet (future stages)
+### Not supported yet
 
-`float` (32-bit), classes with inheritance, interfaces and generic constraints,
-`own`/`move` and destructors, `comptime`, `gc`. Keep `.fg` files within the subset above.
+- Classes with inheritance, interfaces, generic constraints (`where T : ...`), 32-bit
+  `float`, destructors and a garbage collector (see "Memory without a garbage collector").
+  `PRODUCTION.md` lists these as post-1.0 work.
+- Smaller gaps: the conditional operator `c ? a : b`, the bitwise-not operator `~`,
+  exponent literals (`1e6`), top-level (global) variables, and arrays of task types
+  (`Task<int>[]`: store task handles as `long`, see "async / await").
+
+Anything outside the language described here is a compile error.
 
 ## Debugging (`-g`)
 
@@ -783,9 +823,8 @@ continuation prompt.
 
 ## If `dotnet build` fails
 
-The compiler builds only its own five `.cs` files (the project lists them
-explicitly), so a stray `Program.cs` from `dotnet new console` will **not** break
-it. If you still see errors, delete the `bin` and `obj` folders and rebuild:
+The compiler builds only its own `.cs` files (the project lists them explicitly),
+so a stray `Program.cs` from `dotnet new console` will **not** break it. If you still see errors, delete the `bin` and `obj` folders and rebuild:
 
 ```
 rmdir /s /q bin obj   REM (cmd)   — or in PowerShell:  rm -r -fo bin,obj
@@ -848,7 +887,9 @@ algorithm in every language, best of 5):
 | C#       | 0.636 s | 3.1x |
 
 This was 0.896 s (last place) before the register allocator, x86 address modes and
-division by constants described below.
+division by constants described below. These times were measured before array bounds
+checks were turned on by default; with them the JSON benchmark is about 4% slower (build
+with `--no-bounds-check` to compare). The fib benchmark uses no arrays, so it is unaffected.
 
 ### Optimizer
 
@@ -894,10 +935,11 @@ alone). `-O0` turns it off.
 
 ## What the language does and doesn't have
 
-Supported: functions, recursion, `if`/`else`, `while`, `for`, integer and
-bitwise arithmetic, sized integers, pointers and MMIO, bounds-checked arrays, typed errors
-(`throws`/`try`), and native code generation for Windows, Linux, and a
-freestanding kernel target.
+Supported: functions, recursion, `if`/`else`, loops (`while`, `for`, `foreach`), `switch`,
+integer, bitwise and `double` arithmetic, sized integers, pointers and MMIO, bounds-checked
+arrays, structs with methods, generics, `List<T>`/`Dictionary<K,V>` with indexers, typed
+errors (`throws`/`try`), multi-file programs, threads, `async`/`await`, calls into C, debug
+info, and native code generation for Windows, Linux, and a freestanding kernel target.
 
 Concurrency: **real OS threads** on the Windows and Linux targets (see "Threads" below).
 For concurrency on every target, including bare metal, use `async`/`await` (below).
@@ -939,7 +981,7 @@ int r = join(t);                             // wait; returns the thread's resul
 - **Sharing.** Pass a pointer or array as the argument (or use `heapbase()`). Plain
   reads and writes of shared cells are not synchronized: use the atomics or a lock.
 - **Implementation.** Windows: `CreateThread` + a TEB TLS slot. Linux: raw
-  `clone` (no libc), the `fs` register for TLS, futex-based `join`. Kernel target:
+  `clone` (no libc), the `gs` register for TLS (leaving `fs` to libc), futex-based `join`. Kernel target:
   atomics only (no scheduler). Windows executables import `ws2_32.dll` only when the
   program uses sockets: every loaded DLL is notified on each thread start.
 - **Limits.** `async`/`await` runs on the main thread only. Console output from
@@ -951,18 +993,10 @@ and `benchmarks/http-server/bench_server_mt.fg` (one accept loop per CPU).
 (Forge starts and joins threads fastest of the OS-thread languages and is level
 on parallel compute and atomics); see `benchmarks/README.md`.
 
-Now present (Linux target): **runtime strings** (concat, length, indexing,
-comparison, `str()`/`toint()`/`substr()`), **file I/O** (`readfile`/`writefile`),
-and **TCP networking** (`tcp_connect`, `tcp_listen`, `accept`, `send`, `recv`,
-`closefd`). With these, Forge can run a real HTTP server and a Redis database
-client (see examples below).
-
-Strings, file I/O, and TCP sockets now work on **both the Linux and Windows
-targets**. On Linux they use raw syscalls; on Windows they use ws2_32.dll
-(Winsock) and kernel32 (CreateFileA/ReadFile/WriteFile). So the HTTP server and
-Redis client run as native Windows .exe files -- no WSL required.
-
-Still absent: classes with inheritance, and a broad standard library (math, collections).
+Runtime strings, file I/O and TCP sockets work on both the Windows and Linux targets
+(see "Strings, files, networking" below), and the standard library has `Math`, `List<T>`,
+`Dictionary<K,V>`, `StringBuilder` and C#'s string methods. For what is still missing,
+see "Not supported yet".
 
 ## Freestanding kernel target
 
@@ -989,8 +1023,8 @@ forgec build examples/kernel_os.fg -o os.elf --target kernel
 qemu-system-x86_64 -kernel os.elf -nographic
 ```
 
-**Tested by booting.** `tests/run.sh` boots `kernel.fg`, `kernel_fib.fg` and
-`kernel_os.fg` in QEMU at -O2 and -O0 and compares their serial output with
+**Tested by booting.** `tests/run.sh` boots `kernel.fg`, `kernel_fib.fg`, `kernel_os.fg`
+and `bounds_loop.fg` (a bounds-check failure reported over serial) in QEMU at -O2 and -O0 and compares their serial output with
 `tests/expected/<name>.boot`. `tests/boot/<name>.in` scripts the input: `wait S`,
 `type TEXT` (a line on the serial port) and `key CHARS` (PS/2 keystrokes injected
 through the QEMU monitor). For `kernel_os` that exercises the timer interrupt, the
@@ -1000,7 +1034,7 @@ CI installs QEMU on Ubuntu.
 
 ## Strings, files, networking (Linux + Windows)
 
-Forge now has a real runtime, not just string literals:
+Strings are runtime values, as in C#:
 
 ```
 string a = "Hello, ";
@@ -1013,14 +1047,15 @@ int    v = toint("6789");       // string -> int
 string p = substr("abcdef",2,3);// "cde"
 ```
 
-File I/O (raw Linux syscalls):
+File I/O (raw syscalls on Linux, kernel32 on Windows):
 
 ```
 writefile("/tmp/out.txt", "hello\n");
 string contents = readfile("/tmp/out.txt");
 ```
 
-TCP sockets (raw Linux syscalls):
+TCP sockets (raw syscalls on Linux, Winsock on Windows; `tcp_connect` on Linux takes an
+IP address, not a host name):
 
 ```
 int fd = tcp_connect("127.0.0.1", 6379);   // client
@@ -1085,10 +1120,8 @@ Speaks the RESP wire protocol over a socket: `SET`/`GET` against a real Redis
 server, verified independently with `redis-cli`. This is a working database
 client built from the socket + string primitives.
 
-These run on **both targets**: `--target linux` (raw syscalls) and
-`--target win` (Winsock + kernel32). The HTTP server and Redis client work as
-native Windows .exe files. They are the foundation a real HTTP API + database
-builds on -- the thing that was impossible a few iterations ago.
+These run on both targets: `--target linux` (raw syscalls) and `--target win`
+(Winsock + kernel32).
 
 ### Running the HTTP server on Windows
 
@@ -1098,8 +1131,9 @@ http_server.exe
 ```
 
 Then from another terminal (or a browser): `curl http://127.0.0.1:9200/`.
-The server is single-threaded (one connection at a time) and uses a fixed 16 MB
-bump heap with no free, so it's built for testing and light use, not load.
+This example is single-threaded (one connection at a time). For a server that uses every
+CPU, see `benchmarks/http-server/bench_server_mt.fg`, and free each request's memory with
+`heapmark`/`heapreset` (see "Memory without a garbage collector").
 
 ## async / await (all targets, including bare metal)
 
@@ -1140,7 +1174,7 @@ What you can write:
 | `await Task.WhenAll(t1, t2, ...)` | waits for every listed task |
 | `Task<int> t = ...;`, `Task t = ...;` | task-typed locals and parameters (`Task<T>` converts to `Task`) |
 | `(i64)t`, `(Task<int>)x` | store task handles in arrays or memory and get them back |
-| `exit(code)` | new builtin: end the program with a status code |
+| `exit(code)` | end the program with a status code |
 
 How it behaves (same as C#, where it matters):
 
@@ -1167,14 +1201,12 @@ and the freestanding `--target kernel`.
 
 Limits: up to 4 parameters per async function; async functions can't declare `throws`
 yet; the scheduler is not thread-safe, so don't mix it with `spawn` threads touching
-the same tasks. The 16 MB heap allows about 450 tasks *alive at the same time* (finished
-tasks' stacks are reused, so the total number of tasks over a run is unlimited). There's
-no timer yet, so there is no `Task.Delay`.
+the same tasks. Each task alive at the same time holds a 32 KB stack (10,000 at once take
+about 320 MB); finished tasks' stacks are reused, so the total number of tasks over a run is
+unlimited. There's no timer yet, so there is no `Task.Delay`.
 
 ## Heap layout note
 
-The first 4 KB of the heap are reserved: bytes 0-63 are the integer-printing scratch
-buffer and `heapbase()` returns heap+64, a ~4 KB shared region. `malloc`/arrays start
-after it. (Before this, the first allocation shared memory with the print buffer, so
-`Console.WriteLine(n)` could corrupt the first array, and `heapbase()` overlapped the
-first `malloc`.)
+The first 8 KB of the heap are reserved: bytes 0-63 are a scratch buffer, `heapbase()`
+returns heap+64 (a shared region of almost 4 KB), and bytes 4096-8191 hold the runtime's
+thread-local data. `malloc`, arrays and objects start after that.

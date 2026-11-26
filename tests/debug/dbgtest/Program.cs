@@ -52,6 +52,7 @@ static unsafe class DbgTest {
     [DllImport("dbghelp.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SymGetLineFromAddrW64(IntPtr h, ulong addr, out uint disp, byte* line);
     [DllImport("dbghelp.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern bool SymGetLineFromNameW64(IntPtr h, string? module, string file, uint line, out int disp, byte* outLine);
+    [DllImport("dbghelp.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SymGetLineNextW64(IntPtr h, byte* line);
     [DllImport("dbghelp.dll", SetLastError = true)] static extern ulong SymSetScopeFromAddr(IntPtr h, ulong addr);
     delegate bool EnumCb(byte* sym, uint size, IntPtr ctx);
     [DllImport("dbghelp.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SymEnumSymbolsW(IntPtr h, ulong baseOfDll, string? mask, EnumCb cb, IntPtr ctx);
@@ -217,12 +218,12 @@ static unsafe class DbgTest {
             var s = SymBuf();
             if (!SymFromNameW(_proc, where, s)) { Say($"no function '{where}'"); return; }
             ulong addr = *(ulong*)(s + 56);
-            // like a debugger: stop after the prologue, at the function's first line after its start
+            // like a debugger: stop after the prologue, at the next line-table row of the function
             var l = stackalloc byte[40]; *(uint*)l = 40;
-            if (SymGetLineFromAddrW64(_proc, addr, out _, l)) {
-                var n = stackalloc byte[40]; *(uint*)n = 40;
-                for (ulong a = addr + 1; a < addr + 64; a++)
-                    if (SymGetLineFromAddrW64(_proc, a, out uint d, n) && d == 0 && *(uint*)(n + 16) != *(uint*)(l + 16)) { addr = a; break; }
+            ulong size = *(uint*)(s + 28);
+            if (SymGetLineFromAddrW64(_proc, addr, out _, l) && SymGetLineNextW64(_proc, l)) {
+                ulong next = *(ulong*)(l + 32);
+                if (next > addr && (size == 0 || next < addr + size)) addr = next;
             }
             SetBreakAt(addr);
         }

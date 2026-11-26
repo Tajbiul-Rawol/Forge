@@ -1498,6 +1498,7 @@ sealed partial class CodeGen {
     // contains nothing that realigns rsp or returns from the middle of an expression.
     bool FramelessSafe(Func f) {
         if (_regOf.Count != _locals.Count) return false;
+        if (f.Params.Count > 4) return false;          // parameters 5+ are read from [rbp+16+8k]
         bool ok = true;
         Walker.Walk(f.Body, e => {
             switch (e) {
@@ -1535,10 +1536,18 @@ sealed partial class CodeGen {
         // incoming register args (rdi,rsi,rdx,rcx) -> their register or stack slot
         // (a parallel move: a parameter's register may be another parameter's source)
         var moves = new List<(int dst, int src)>();
+        var stackParams = new List<(int Reg, int At)>();
         for (int i = 0; i < f.Params.Count && i < 4; i++) {
             var pn = f.Params[i].Name;
             if (_regOf.TryGetValue(pn, out int pr)) { if (pr != ArgRegs[i]) moves.Add((pr, ArgRegs[i])); }
             else _a.StoreSlot(ArgRegs[i], _locals[pn].Off);
+        }
+        // parameters 5 and up: the caller left them on the stack, above the return address
+        for (int i = 4; i < f.Params.Count; i++) {
+            var pn = f.Params[i].Name;
+            int at = 16 + 8 * (i - 4);
+            if (_regOf.TryGetValue(pn, out int pr)) stackParams.Add((pr, at));
+            else { _a.LoadSlot(RAX, at); _a.StoreSlot(RAX, _locals[pn].Off); }
         }
         while (moves.Count > 0) {
             int k = moves.FindIndex(m => !moves.Exists(o => o.src == m.dst));
@@ -1551,6 +1560,7 @@ sealed partial class CodeGen {
             _a.MovRR(moves[k].dst, moves[k].src);
             moves.RemoveAt(k);
         }
+        foreach (var (r, at) in stackParams) _a.LoadSlot(r, at);   // after the moves: their registers are free now
         DbgBodyStart();
         EmitBody(f.Body);
         // implicit return for void
@@ -2413,6 +2423,7 @@ sealed partial class CodeGen {
             return;
         }
         var f = _funcs[c.Name];
+        if (c.Args.Count > 4) { EmitStackArgCall(c); return; }
         if (c.Args.All(IsLight)) {
             for (int i = 0; i < c.Args.Count; i++) {
                 var a = c.Args[i]; int dst = ArgRegs[i];
@@ -2437,6 +2448,23 @@ sealed partial class CodeGen {
         for (int i = n - 1; i >= 0; i--) _a.Db(pops[i]);
         _a.CallRel(c.Name);
         // result already in rax
+    }
+
+    // A call with more than 4 arguments: the first 4 go in rdi, rsi, rdx, rcx and the rest
+    // on the stack, argument 5 lowest ([rsp] at the call, [rbp+16] in the callee). Arguments
+    // are still evaluated left to right: room for the stack ones is made first, the
+    // register ones are pushed above it and popped into their registers at the end.
+    void EmitStackArgCall(CallExpr c) {
+        int n = c.Args.Count, k = n - 4, depth = 0;
+        _a.Db(0x48, 0x81, 0xec); EmitImm32(8 * k);                 // sub rsp, 8k
+        for (int i = 0; i < n; i++) {
+            EmitExpr(c.Args[i]);
+            if (i < 4) { _a.PushRax(); depth++; }
+            else _a.St(RSP, 8 * depth + 8 * (i - 4), RAX);         // mov [rsp + ...], rax
+        }
+        for (int i = 3; i >= 0; i--) _a.PopR(ArgRegs[i]);
+        _a.CallRel(c.Name);
+        _a.Db(0x48, 0x81, 0xc4); EmitImm32(8 * k);                 // add rsp, 8k
     }
 
     // Calling an async function: evaluate the arguments, create a task whose entry is
