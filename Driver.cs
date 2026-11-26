@@ -132,7 +132,7 @@ static class Program {
     static int Usage(string? problem = null) {
         if (problem != null) Console.Error.WriteLine($"forgec: {problem}");
         Console.Error.WriteLine("usage:");
-        Console.Error.WriteLine("  forgec <build|run> <file.fg> [-o out] [--target win|linux|kernel] [-O0] [--interp /lib/ld-musl-x86_64.so.1]");
+        Console.Error.WriteLine("  forgec <build|run> <file.fg> [-o out] [--target win|linux|kernel] [-O0] [--no-bounds-check] [--interp /lib/ld-musl-x86_64.so.1]");
         Console.Error.WriteLine("  forgec check <file.fg>                  # lint: errors + warnings, no binary");
         Console.Error.WriteLine("  forgec complete <file.fg> <line> <col>  # autocomplete candidates at a position");
         return ExitUsage;
@@ -155,7 +155,7 @@ static class Program {
         string cmd = args[0], path = args[1];
         string outPath = Path.GetFileNameWithoutExtension(path);
         Target target = Target.Windows;   // Windows first, per the brief
-        bool optimize = true;
+        bool optimize = true, bounds = true;
         string? interp = null;
         for (int i = 2; i < args.Length; i++) {
             string a = args[i];
@@ -163,6 +163,7 @@ static class Program {
             if (needsValue && i + 1 >= args.Length) return Usage($"option '{a}' needs a value");
             if (a == "-o") outPath = args[++i];
             else if (a == "-O0") optimize = false;      // disable the optimizer (debugging / comparison)
+            else if (a == "--no-bounds-check") bounds = false;   // unchecked array indexing
             else if (a == "--interp") interp = args[++i];   // Linux dynamic loader (externs)
             else if (a == "--target") {
                 string t = args[++i];
@@ -186,7 +187,7 @@ static class Program {
         try {
             var toks = new Lexer(src).Lex();
             var mod = new Parser(toks).ParseModule();
-            var cg = new CodeGen(mod, target) { OptimizeEnabled = optimize };
+            var cg = new CodeGen(mod, target) { OptimizeEnabled = optimize, BoundsChecks = bounds };
             if (interp != null) cg.LinuxInterp = interp;
             var image = cg.LowerToFile();
             try { File.WriteAllBytes(outPath, image); }

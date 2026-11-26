@@ -309,7 +309,8 @@ sealed partial class CodeGen {
         throw new ForgeException($"struct {st} has no field '{name}'" + Suggest.Hint(name, si.Fields.Keys), line);
     }
 
-    string NewLabel(string p) => $".{p}{_labelId++}";
+    // the # keeps prefixes ending in a digit apart: "or1"+86 and "or"+186 were both .or186
+    string NewLabel(string p) => $".{p}#{_labelId++}";
 
     // ----------------------------------------------------------------- type check
     static readonly HashSet<string> IntTypes = new() {
@@ -863,6 +864,8 @@ sealed partial class CodeGen {
         EmitWriteOut();            // unified stdout writer (rsi=ptr, rdx=len)
         if (_target == Target.Windows) EmitWinInit();
         if (_target == Target.Kernel) EmitSerial();
+        EmitBoundsStubs();         // any left over from code emitted outside a function
+        EmitBoundsFail();          // the shared out-of-range report (only if an array is indexed)
         EmitPrintInt();            // helper: prints rdi as signed decimal
         EmitPrintStr();
         _a.Resolve();
@@ -1515,6 +1518,7 @@ sealed partial class CodeGen {
             // safety net: return 0
             _a.MovRaxImm(0); if (f.Throws != null) _a.MovRdxImm(1); EmitFuncEpilogue();
         }
+        EmitBoundsStubs();             // cold out-of-range paths (BoundsCheck.cs)
     }
 
     // Restores the callee-saved registers this function used, then returns.
@@ -1580,7 +1584,7 @@ sealed partial class CodeGen {
             case InlineRet ir: if (ir.E != null) EmitExpr(ir.E); _a.JmpRel(ir.End); break;
             case IndexAssign ia: {
                 var at = TypeOf(ia.Arr);
-                EmitElemStore(ia.Arr, ia.Index, ia.E, IsPtr(at) ? Width(Pointee(at)) : 8);
+                EmitElemStore(ia.Arr, ia.Index, ia.E, IsPtr(at) ? Width(Pointee(at)) : 8, IsArray(at) ? ia.Line : -1);
                 break;
             }
             case AsmStmt asm:
@@ -1798,7 +1802,11 @@ sealed partial class CodeGen {
                 else if (IsPtr(at)) {
                     string pe = Pointee(at);
                     EmitLoadAt(EmitElemAddr(ix.Arr, ix.Index, Width(pe)), Width(pe), Signed(pe));
-                } else EmitLoadAt(EmitElemAddr(ix.Arr, ix.Index, 8), 8, true);              // array: 8-byte elements
+                } else {                                                                     // array: 8-byte elements
+                    var m = EmitElemAddr(ix.Arr, ix.Index, 8);
+                    EmitBoundsCheck(m, ix.Line);
+                    EmitLoadAt(m, 8, true);
+                }
                 break;
             }
             case LengthExpr le: {
@@ -2230,27 +2238,29 @@ sealed partial class CodeGen {
         }
     }
     // arr[idx] = e  for an element of the given width
-    void EmitElemStore(Expr arr, Expr idx, Expr e, int width) {
+    // checkLine >= 0: arr is an array, bounds-checked (the check reports that line)
+    void EmitElemStore(Expr arr, Expr idx, Expr e, int width, int checkLine = -1) {
+        void Store(MemRef m) { if (checkLine >= 0) EmitBoundsCheck(m, checkLine); EmitStoreAt(m, width); }
         string? arrVar = arr is VarRef av ? av.Name : null;
         Expr core = idx is Binary { Op: "+" or "-" } bb && IsImm(bb.R, out _) ? bb.L : idx;
         string? coreVar = core is VarRef cv ? cv.Name : null;
         bool eSafe = (arrVar == null || !Writes(e, arrVar)) && (coreVar == null || !Writes(e, coreVar));
         if (PlainAddr(arr, idx) && eSafe) {                     // value first, then movs for the address
             EmitExpr(e); _a.MovRR(RDX, RAX);
-            EmitStoreAt(EmitElemAddr(arr, idx, width), width);
+            Store(EmitElemAddr(arr, idx, width));
             return;
         }
         if (IsPlain(e) && !(e is VarRef ev && (Writes(arr, ev.Name) || Writes(idx, ev.Name)))) {
             var m = EmitElemAddr(arr, idx, width);             // address first, then the value
             LoadOperand(RDX, e);
-            EmitStoreAt(m, width);
+            Store(m);
             return;
         }
         EmitExpr(arr); _a.PushRax();                           // general case: arr, idx, value in source order
         EmitExpr(idx); _a.PushRax();
         EmitExpr(e); _a.MovRR(RDX, RAX);
         _a.PopRcx(); _a.PopRax();
-        EmitStoreAt(new MemRef(RAX, RCX, width, 0), width);
+        Store(new MemRef(RAX, RCX, width, 0));
     }
 
     // store rdx -> *(rax), sized by pointee type

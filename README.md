@@ -21,6 +21,7 @@ a runtime, or anything else installed to run.
 ```
 forgec/
 ├── README.md          <- this file
+├── PRODUCTION.md      <- the 1.0 checklist: what "production ready" means for Forge
 ├── ForgeC.csproj      <- project file (targets .NET 10)
 ├── forge.bat          <- Windows helper:   forge build examples\hello.fg
 ├── forge.sh           <- Linux/macOS helper: ./forge.sh build examples/hello.fg
@@ -29,6 +30,7 @@ forgec/
 ├── Asm.cs             <- x86-64 instruction encoder (opcode bytes + label fixups)
 ├── CodeGen.cs         <- type checker + machine-code generation + register allocator
 ├── Optimizer.cs       <- inlining, tail-recursion elimination, partial inlining, folding
+├── BoundsCheck.cs     <- array bounds checks (inline compare + out-of-line error report)
 ├── Threads.cs         <- spawn/join, per-thread heap arenas, atomics, locks (Windows + Linux)
 ├── InlineAsm.cs       <- the asm("...") assembler (Intel syntax)
 ├── AsyncRuntime.cs    <- async/await: coroutine scheduler (written in Forge) + docs
@@ -39,6 +41,8 @@ forgec/
     ├── hello.fg       <- minimal program
     ├── features.fg    <- errors, recursion, while loops, boolean logic
     ├── arrays.fg      <- heap arrays: sieve of Eratosthenes + sums
+    ├── bounds.fg      <- array bounds checks (ends with an out-of-range store)
+    ├── bounds_loop.fg <- an off-by-one loop stopped by the bounds check
     ├── turing.fg      <- a Turing machine (binary increment) on an array tape
     ├── lowlevel.fg    <- pointers, sized memory access, hex, MMIO-style register writes
     ├── uart.fg        <- a UART serial-port driver (register map, status polling, bit ops)
@@ -179,7 +183,7 @@ CI runs the suite on Windows and Ubuntu, plus a 3,000-input fuzz run.
 ## Command reference
 
 ```
-dotnet bin/Release/net10.0/forgec.dll <build|run> <file.fg> [-o output] [--target win|linux|kernel] [-O0]
+dotnet bin/Release/net10.0/forgec.dll <build|run> <file.fg> [-o output] [--target win|linux|kernel] [-O0] [--no-bounds-check]
 dotnet bin/Release/net10.0/forgec.dll check    <file.fg>
 dotnet bin/Release/net10.0/forgec.dll complete <file.fg> <line> <col>
 ```
@@ -195,6 +199,8 @@ dotnet bin/Release/net10.0/forgec.dll complete <file.fg> <line> <col>
 - `--target win` (default), `--target linux`, or `--target kernel`.
 - `-O0`   — turn the optimizer off (see "Optimizer" below). Useful to compare
   output or speed, or to rule the optimizer out when chasing a bug.
+- `--no-bounds-check` — compile array indexing without bounds checks (see
+  "Array bounds checks" below). Only for code that is already known to be correct.
 
 **Errors and exit codes.** Problems are printed as `file:line: error: message`. Type
 errors don't stop at the first one: `forgec` reports every independent error (up to 20)
@@ -255,7 +261,8 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
 - function calls (up to 4 parameters). A program's own function may reuse a
   builtin's name (e.g. its own `send`): the program's function wins
 - arrays: `int[] a = new int[n];`, element read/write `a[i]` / `a[i] = v`,
-  and `a.length` (heap-backed, so the language is Turing complete)
+  and `a.length` (heap-backed, so the language is Turing complete). Every array
+  access is bounds-checked (see "Array bounds checks")
 - `for (init; cond; step)` loops (alongside `while`)
 - compound assignment `+= -= *= /= %= &= |= ^= <<= >>=` on variables, array
   elements, `*p` and struct fields; `x++` / `x--` / `++x` / `--x` as statements
@@ -318,6 +325,27 @@ Rules for the new statement forms:
 
 `float` (32-bit), classes with inheritance, interfaces and generic constraints,
 `own`/`move` and destructors, `comptime`, `gc`. Keep `.fg` files within the subset above.
+
+## Array bounds checks
+
+Every `a[i]` and `a[i] = v` on an array checks that `0 <= i < a.length`. An index out
+of range stops the program with exit code 1 and the source line, the way C# throws
+`IndexOutOfRangeException`:
+
+```
+Index 4 is out of range for an array of length 4 (line 10)
+```
+
+- **Cost.** One compare against the stored length and one branch that is never taken;
+  the code that reports the error sits out of line at the end of the function. The
+  JSON benchmark is about 4% slower with checks than without.
+- **What is checked.** Arrays (`T[]`), including `foreach` over an array and arrays of
+  structs. `List<T>` checks its own indexes. **Pointers** (`p[i]`) are never checked,
+  since they are for raw memory and MMIO. **Strings** (`s[i]`) aren't checked yet:
+  their length isn't stored, so a check would cost a `strlen` on every access.
+- **Turning them off.** `--no-bounds-check` compiles unchecked indexing (the old
+  behavior). On the kernel target the report goes to the serial port and the CPU halts.
+- See `examples/bounds.fg` and `examples/bounds_loop.fg`.
 
 ## Generics
 
@@ -767,7 +795,7 @@ alone). `-O0` turns it off.
 ## What the language does and doesn't have
 
 Supported: functions, recursion, `if`/`else`, `while`, `for`, integer and
-bitwise arithmetic, sized integers, pointers and MMIO, arrays, typed errors
+bitwise arithmetic, sized integers, pointers and MMIO, bounds-checked arrays, typed errors
 (`throws`/`try`), and native code generation for Windows, Linux, and a
 freestanding kernel target.
 

@@ -1,0 +1,14 @@
+module bounds_loop;
+
+// An off-by-one loop reads one element past the end: the bounds check stops it.
+
+void Main() {
+    int[] squares = new int[4];
+    for (int i = 0; i < squares.length; i++) { squares[i] = i * i; }
+    int sum = 0;
+    for (int i = 0; i <= squares.length; i++) {
+        sum += squares[i];
+        Console.WriteLine(sum);
+    }
+    Console.WriteLine("not reached");
+}
