@@ -861,6 +861,8 @@ sealed class Parser {
         Expr? r = e switch {
             IntLit i => new IntLit { Val = i.Val },
             BoolLit b => new BoolLit { Val = b.Val },
+            StrLit sl => new StrLit { Val = sl.Val },             // dict["key"] += 1
+            FloatLit fl => new FloatLit { Val = fl.Val },
             NullLit => new NullLit(),
             VarRef v => new VarRef { Name = v.Name },
             Unary u => ClonePure(u.E) is { } ue ? new Unary { Op = u.Op, E = ue } : null,

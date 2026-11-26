@@ -111,6 +111,11 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
 
+### Session: indexers (2026-11-26)
+- `x[i]` on a struct is `x.Get(i)` and `x[i] = v` is `x.Set(i, v)` (List<T>, Dictionary<K,V>, any struct with those methods). `TypeOf(IndexExpr)` on a struct builds the `.Get` call once (`_indexCalls`, by node) and types it, so the index is checked as a call argument and enclosing method calls (`rows[0].Add(4)`, typed early by `TypeOfCallName`) see the right type. `LowerExpr` replaces the node with that same call, resolved at once (a call typed through it is never typed again); `LowerStmt` turns `IndexAssign` into `ExprStmt(.Set)`. `IndexerType` gives "X cannot be indexed: it has no Get method" / "... no Set method".
+- Compound forms come free from the parser (`list[i] += 1` is `Set(i, Get(i) + 1)`); `ClonePure` now accepts string and double literals (`dict["k"] += 1`).
+- All 82 other example binaries are byte-identical to main. New: `examples/indexers.fg`, `tests/errors/indexer_misuse.fg`.
+
 ### Session: debug info, -g (2026-11-26)
 - Model (`DebugInfo.cs`): `DbgRow` at each `EmitStmt` and before loop tests (deduped per source line), `DbgFuncStart/BodyStart/End` in `EmitFunc` (range, frame size, saved registers, `_locals` with slots; register-allocated or frameless variables marked InReg = optimized out; `$` temps and runtime functions left out). Runtime/stdlib sources are lexed as `Sources.NoFile` (-1), so inlined runtime code adds no rows.
 - Linux: `DwarfSections` writes DWARF 4: abbrev, info (CU, base/pointer/struct types with members, subprograms with `DW_OP_fbreg` locals, frame base rbp), line program (file/line/column, a line-0 row after each function), `.debug_frame` (CIE + an FDE per function: push rbp / mov rbp,rsp / saved-register slots; frameless pushes). `Elf.Build` appends them with a section header table and `.symtab` (only with -g).
@@ -253,7 +258,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 1. (Done: kernel boot tests in QEMU.) Next for bare metal: enable SSE at boot so `double` works there, a bootable GRUB ISO for real hardware, APIC timer, framebuffer.
 2. Commit the regression tests (see section 5).
-3. Language: indexers (`list[i]`, `dict[key]`), exponent literals, a `~` operator, keeping doubles in SSE registers, keeping doubles in SSE registers for speed. (`+=`/`++`, `break`/`continue`, `switch`, runtime I/O errors, `double` and generics are done.)
+3. Language: exponent literals, a `~` operator, keeping doubles in SSE registers, keeping doubles in SSE registers for speed. (`+=`/`++`, `break`/`continue`, `switch`, runtime I/O errors, `double`, generics and indexers are done.)
 4. (Done: string literals inside interpolation holes.)
 5. Bare metal: a GDT/TSS helper example, APIC timer, framebuffer output, a bootable ISO (GRUB) for real hardware.
 6. Performance: more loop optimizations (moving invariant arithmetic out of loops, strength reduction), fewer redundant moves, unrolling. JSON is still 1.4x behind C.
