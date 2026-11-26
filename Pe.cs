@@ -146,7 +146,12 @@ static class Pe {
         return lay;
     }
 
-    public static byte[] Build(byte[] code, byte[] stringBlob, Layout lay, long entryVaddr) {
+    // where the section headers start in the file (after DOS header, PE signature, COFF and optional headers)
+    public const int SectionHeadersOffset = 0x40 + 4 + 20 + 240;
+
+    // pdataOff / debugDirOff (>= 0, offsets in code): -g's exception and debug directories (Pdb.cs)
+    public static byte[] Build(byte[] code, byte[] stringBlob, Layout lay, long entryVaddr,
+                               int pdataOff = -1, int pdataLen = 0, int debugDirOff = -1) {
         int dataContentLen = lay.StringsOffset + stringBlob.Length;
         var data = new byte[dataContentLen];
 
@@ -252,6 +257,8 @@ static class Pe {
         W32(dd + 12*8 + 0, lay._dataRva + lay.IatOffset);   // IAT RVA (start of first group)
         // IAT spans all groups incl. per-group terminators: from first slot to end of last group.
         W32(dd + 12*8 + 4, (lay._idtOff - lay.IatOffset));  // IAT size
+        if (pdataOff >= 0) { W32(dd + 3*8, lay._textRva + pdataOff); W32(dd + 3*8 + 4, pdataLen); }     // exception (unwind) table
+        if (debugDirOff >= 0) { W32(dd + 6*8, lay._textRva + debugDirOff); W32(dd + 6*8 + 4, 28); }    // debug directory
         // section headers
         int sh = opt + 240;
         void Section(int baseOff, string name, int vsize, int rva, int rawsize, int rawptr, uint chars) {

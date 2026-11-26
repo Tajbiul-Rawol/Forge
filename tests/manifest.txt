@@ -12,6 +12,8 @@
 #                  (without QEMU the image is only built)
 #           glibc  linux target linked against libc.so.6: run at -O2 and -O0 on a glibc Linux host,
 #                  or in the Docker image $FORGE_DOCKER; elsewhere only built
+#           debug  build at -O0 -g and step through it with a debugger script (tests/debug/):
+#                  the dbghelp harness on Windows, gdb on Linux (or in $FORGE_GDB_DOCKER)
 #
 # On Windows, linux targets are build-only. On Linux, win targets are build-only.
 
@@ -59,3 +61,7 @@ kernel_os       kernel      boot
 bounds_loop     kernel      boot
 
 typos           -           check
+
+# debug info (-g)
+debugme         win,linux   debug
+imports         win,linux   debug

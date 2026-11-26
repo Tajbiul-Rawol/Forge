@@ -1,0 +1,19 @@
+# Windows debug info (PDB): breakpoints, backtrace (unwind info), variables, struct fields, next, finish.
+break debugme.fg:10
+break SumTo
+run
+bt
+print scale
+print w
+print p
+continue
+next
+next
+next
+locals
+finish
+print a
+print name
+print ratio
+print ok
+continue

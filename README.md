@@ -32,6 +32,8 @@ forgec/
 ├── Optimizer.cs       <- inlining, tail-recursion elimination, partial inlining, folding
 ├── BoundsCheck.cs     <- array bounds checks (inline compare + out-of-line error report)
 ├── Imports.cs         <- multi-file programs: import "file.fg", file:line:col positions
+├── DebugInfo.cs       <- -g: line tables, functions, variables; DWARF for Linux
+├── Pdb.cs             <- -g on Windows: the .pdb, unwind info, the debug directory
 ├── Threads.cs         <- spawn/join, per-thread heap arenas, atomics, locks (Windows + Linux)
 ├── InlineAsm.cs       <- the asm("...") assembler (Intel syntax)
 ├── AsyncRuntime.cs    <- async/await: coroutine scheduler (written in Forge) + docs
@@ -45,6 +47,7 @@ forgec/
     ├── bounds.fg      <- array bounds checks (ends with an out-of-range store)
     ├── bounds_loop.fg <- an off-by-one loop stopped by the bounds check
     ├── imports.fg     <- a program in three files (imports lib/geometry.fg and lib/text.fg)
+    ├── debugme.fg     <- the program the debugger tests step through (tests/debug/)
     ├── turing.fg      <- a Turing machine (binary increment) on an array tape
     ├── lowlevel.fg    <- pointers, sized memory access, hex, MMIO-style register writes
     ├── uart.fg        <- a UART serial-port driver (register map, status polling, bit ops)
@@ -161,6 +164,8 @@ tests/run.sh                          # all examples, -O2 and -O0, compared with
 tests/run.sh hello structs            # only some examples
 FORGE_WSL=docker-desktop tests/run.sh # on Windows: also run the Linux binaries in WSL
 FORGE_DOCKER=ubuntu:24.04 tests/run.sh # also run the glibc examples in a container
+FORGE_GDB_DOCKER=forge-gdb tests/run.sh  # run the Linux debugger tests in a container with gdb
+                                       # (docker build -t forge-gdb tests/debug)
 tests/run.sh --update hello           # accept new output as the baseline
 ```
 
@@ -185,7 +190,7 @@ CI runs the suite on Windows and Ubuntu, plus a 3,000-input fuzz run.
 ## Command reference
 
 ```
-dotnet bin/Release/net10.0/forgec.dll <build|run> <file.fg> [-o output] [--target win|linux|kernel] [-O0] [--no-bounds-check]
+dotnet bin/Release/net10.0/forgec.dll <build|run> <file.fg> [-o output] [--target win|linux|kernel] [-O0] [-g] [--no-bounds-check]
 dotnet bin/Release/net10.0/forgec.dll check    <file.fg>
 dotnet bin/Release/net10.0/forgec.dll complete <file.fg> <line> <col>
 ```
@@ -201,6 +206,8 @@ dotnet bin/Release/net10.0/forgec.dll complete <file.fg> <line> <col>
 - `--target win` (default), `--target linux`, or `--target kernel`.
 - `-O0`   — turn the optimizer off (see "Optimizer" below). Useful to compare
   output or speed, or to rule the optimizer out when chasing a bug.
+- `-g`    — add debug information (see "Debugging" below): DWARF inside a Linux binary,
+  or a `.pdb` next to a Windows `.exe`. Combine with `-O0` to see every variable.
 - `--no-bounds-check` — compile array indexing without bounds checks (see
   "Array bounds checks" below). Only for code that is already known to be correct.
 
@@ -342,6 +349,47 @@ Rules for the new statement forms:
 
 `float` (32-bit), classes with inheritance, interfaces and generic constraints,
 `own`/`move` and destructors, `comptime`, `gc`. Keep `.fg` files within the subset above.
+
+## Debugging (`-g`)
+
+`-g` adds debug information, so a Forge program can be run in a debugger: breakpoints
+by `file:line` or function name, stepping, backtraces, and parameters, locals and struct
+fields with their values.
+
+```
+forgec build app.fg -O0 -g --target linux -o app     # DWARF inside the ELF: gdb ./app
+forgec build app.fg -O0 -g -o app.exe                 # app.exe + app.pdb: WinDbg, Visual Studio
+```
+
+```
+(gdb) break debugme.fg:10
+(gdb) run
+Breakpoint 1, Area (p=..., scale=2) at examples/debugme.fg:10
+(gdb) p *p
+$1 = {X = 3, Y = 4}
+(gdb) finish
+Value returned is $2 = 48
+```
+
+- **Linux:** DWARF 4 (`.debug_info`, `.debug_line`, `.debug_frame`, `.debug_abbrev`) plus a
+  `.symtab` with every function and runtime routine.
+- **Windows:** a PDB next to the `.exe` (found through the `.exe`'s debug directory), plus
+  unwind tables (`.pdata`/`.xdata`) so debuggers can walk the stack. Builds are
+  reproducible: the PDB's GUID is a hash of the code.
+- **What you see.** One line-table row per statement (loop conditions included), every
+  function with its parameters and locals, and the types: integers of every size, `bool`,
+  `double`, `string` (shown as text), pointers and arrays (as pointers), and structs
+  with their fields. Code from imported files keeps its own file and line.
+- **Use `-O0` to debug.** With the optimizer on, functions may be inlined and variables the
+  register allocator keeps in registers are shown as `<optimized out>` (a register is
+  shared by several variables, so its value could belong to another one).
+- Without `-g` nothing changes: the output is byte for byte the same.
+- **Tested** by `tests/run.sh` (mode `debug`): gdb on Linux, and on Windows
+  `tests/debug/dbgtest`, a small debugger built on the Win32 debug API and `dbghelp.dll`
+  (the symbol engine WinDbg uses). Both set breakpoints, walk the stack, print variables,
+  step with `next` and `finish`.
+- Not yet: `-g` for `--target kernel`, block scopes (every variable is visible in the
+  whole function), and column-precise stepping.
 
 ## Multi-file programs
 

@@ -7,6 +7,8 @@
 #
 # Works in Git Bash on Windows and in bash on Linux. Needs the .NET 10 SDK.
 # On Windows, FORGE_WSL=<distro> also runs the linux binaries inside that WSL distro.
+# FORGE_GDB_DOCKER=<image> runs the Linux debug-info tests in Docker when gdb is not
+# installed (build the image with: docker build -t forge-gdb tests/debug).
 # Exit code is 0 only if every case passes.
 
 set -u
@@ -193,11 +195,61 @@ cli_case() {  # label expected-exit expected-text args... : command-line handlin
     else pass "cli: $label"; fi
 }
 
+# Debug info (-g), mode "debug": build at -O0 -g and drive the program with a debugger
+# script, comparing the transcript with tests/expected/<name>.<win|gdb>.out.
+#   win:   tests/debug/dbgtest (the Win32 debug API + dbghelp.dll, which reads the PDB)
+#          runs tests/debug/<name>.win
+#   linux: gdb runs tests/debug/<name>.gdb, natively or in the image $FORGE_GDB_DOCKER
+# Programs are built from the repository root with a relative path, so gdb finds the
+# sources at the same relative path inside the container.
+DBGTEST=""
+debug_case() {  # name target
+    local name=$1 target=$2 label exe script expected actual rc
+    label="$name [$target -g]"
+    exe="$WORK/$name-g$(ext_for "$target")"
+    if ! ( cd "$ROOT" && "${FORGEC[@]}" build "examples/$name.fg" -o "$exe" --target "$target" -O0 -g ) > "$WORK/build.log" 2>&1; then
+        fail "$label build" "$(cat "$WORK/build.log")"; return
+    fi
+    if [ "$target" = win ]; then
+        [ -f "${exe%.exe}.pdb" ] || { fail "$label" "no .pdb next to the .exe"; return; }
+        if [ "$HOST" != win ]; then pass "$label build"; return; fi
+        if [ -z "$DBGTEST" ]; then
+            if ! dotnet build -c Release -nologo -v q "$ROOT/tests/debug/dbgtest/dbgtest.csproj" > "$WORK/dbgtest.log" 2>&1; then
+                fail "$label" "cannot build tests/debug/dbgtest: $(tail -5 "$WORK/dbgtest.log")"; return
+            fi
+            DBGTEST="$ROOT/tests/debug/dbgtest/bin/Release/net10.0/dbgtest.exe"
+        fi
+        script="$ROOT/tests/debug/$name.win"; expected="$ROOT/tests/expected/$name.win.out"
+        timeout 120 "$DBGTEST" "$exe" "$script" < /dev/null > "$WORK/out" 2>&1
+    else
+        script="$ROOT/tests/debug/$name.gdb"; expected="$ROOT/tests/expected/$name.gdb.out"
+        local gdbargs="-q -batch -nx -x"
+        if [ "$HOST" = linux ] && command -v gdb > /dev/null 2>&1; then
+            ( cd "$ROOT" && timeout 120 gdb $gdbargs "$script" "$exe" ) < /dev/null > "$WORK/out" 2>&1
+        elif [ -n "${FORGE_GDB_DOCKER:-}" ]; then
+            local r=$ROOT w=$WORK; [ "$HOST" = win ] && r=$(cygpath -w "$ROOT") && w=$(cygpath -w "$WORK")
+            MSYS_NO_PATHCONV=1 docker run --rm -v "$r:/w" -v "$w:/b" -w /w "$FORGE_GDB_DOCKER"                 timeout 120 gdb $gdbargs "/w/tests/debug/$name.gdb" "/b/$(basename "$exe")" < /dev/null > "$WORK/out" 2>&1
+        else
+            pass "$label build (gdb not found: set FORGE_GDB_DOCKER=forge-gdb)"; return
+        fi
+    fi
+    rc=$?
+    if [ $rc -eq 125 ] && [ "$target" = linux ]; then fail "$label" "docker could not run $FORGE_GDB_DOCKER: $(head -2 "$WORK/out")"; return; fi
+    actual="$(norm < "$WORK/out" | sed -E 's/0x[0-9a-f]+/0x?/g; s/process [0-9]+/process N/g'; echo "exit: $rc")"
+    if [ $UPDATE -eq 1 ]; then printf '%s
+' "$actual" > "$expected"; pass "$label (baseline written)"; return; fi
+    if [ ! -f "$expected" ]; then fail "$label" "no baseline: run tests/run.sh --update $name"; return; fi
+    if [ "$actual" = "$(norm < "$expected")" ]; then pass "$label"
+    else fail "$label" "$(diff <(norm < "$expected") <(printf '%s
+' "$actual") | head -30)"; fi
+}
+
 echo "== host: $HOST"
 while read -r name targets MODE _; do
     case "$name" in ''|'#'*) continue ;; esac
     wanted "$name" || continue
     if [ "$MODE" = check ]; then check_case "$name"; continue; fi
+    if [ "$MODE" = debug ]; then for t in ${targets//,/ }; do debug_case "$name" "$t"; done; continue; fi
     for t in ${targets//,/ }; do
         if [ "$t" = kernel ]; then
             run_case "$name" kernel ""
@@ -236,6 +288,7 @@ void Main() { string s = readfile("x"); }
 void Main() { double x = 1.5; }
 ' > "$WORK/kd.fg"
     cli_case "double on bare metal" 1 "double needs --target win"    build kd.fg --target kernel
+    cli_case "-g on bare metal"    2 "-g is not supported for --target kernel"  build ok.fg --target kernel -g
 fi
 
 echo

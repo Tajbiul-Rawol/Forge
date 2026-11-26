@@ -9,8 +9,11 @@ namespace ForgeC;
 static class Elf {
     // interpOff/dynOff (>= 0): offsets inside 'data' of the interpreter path and the
     // .dynamic table, for a dynamically linked program (one that calls externs).
+    // debug (-g): DWARF sections and function symbols, written after the data with a
+    // section header table (an executable without -g has no section headers at all).
     public static byte[] Build(byte[] code, long codeVaddr, byte[] data, long dataVaddr, long entry, int dataMemSize = -1,
-                               int interpOff = -1, int interpLen = 0, int dynOff = -1, int dynLen = 0) {
+                               int interpOff = -1, int interpLen = 0, int dynOff = -1, int dynLen = 0,
+                               List<(string Name, byte[] Bytes)>? debug = null, List<(string Name, long Addr, long Size)>? symbols = null) {
         const int EHSIZE = 64;
         const int PHSIZE = 56;
         const int PHNUM = 4;      // [INTERP|NULL] [LOAD code] [LOAD data] [DYNAMIC|NULL]: fixed, so code always starts at the same address
@@ -94,7 +97,56 @@ static class Elf {
         // ---- data ----
         buf.AddRange(data);
 
+        if (debug != null) AddSections(buf, codeVaddr, code.Length, codeFileOff, dataVaddr, data.Length, dataFileOff, debug, symbols ?? new());
         return buf.ToArray();
+    }
+
+    // Appends the non-loaded sections and a section header table, then points the ELF
+    // header at it. Sections: null, .text, .data, the debug sections, .symtab, .strtab, .shstrtab.
+    static void AddSections(List<byte> buf, long codeVaddr, int codeLen, int codeOff, long dataVaddr, int dataLen, int dataOff,
+                            List<(string Name, byte[] Bytes)> debug, List<(string Name, long Addr, long Size)> symbols) {
+        var shstr = new ByteWriter(); shstr.U8(0);
+        int Name(string n) { int at = shstr.Count; shstr.Str(n); return at; }
+        var headers = new List<(int Name, int Type, long Flags, long Addr, long Off, long Size, int Link, int Info, long Align, long EntSize)>();
+        headers.Add((0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+        headers.Add((Name(".text"), 1, 6, codeVaddr, codeOff, codeLen, 0, 0, 16, 0));          // PROGBITS, ALLOC|EXEC
+        headers.Add((Name(".data"), 1, 3, dataVaddr, dataOff, dataLen, 0, 0, 16, 0));          // PROGBITS, ALLOC|WRITE
+        foreach (var (n, bytes) in debug) {
+            int off = buf.Count; buf.AddRange(bytes);
+            headers.Add((Name(n), 1, 0, 0, off, bytes.Length, 0, 0, 1, 0));
+        }
+        // .symtab: a null symbol, then one global FUNC symbol per routine, all in .text (section 1)
+        var strtab = new ByteWriter(); strtab.U8(0);
+        var sym = new ByteWriter();
+        for (int i = 0; i < 24; i++) sym.U8(0);
+        foreach (var (n, addr, size) in symbols) {
+            int nameAt = strtab.Count; strtab.Str(n);
+            sym.U32(nameAt); sym.U8(0x12); sym.U8(0); sym.U16(1); sym.U64(addr); sym.U64(size);   // GLOBAL FUNC, section 1
+        }
+        int symtabIndex = headers.Count, strtabIndex = symtabIndex + 1;
+        while (buf.Count % 8 != 0) buf.Add(0);
+        int symOff = buf.Count; buf.AddRange(sym.ToArray());
+        headers.Add((Name(".symtab"), 2, 0, 0, symOff, sym.Count, strtabIndex, 1, 8, 24));     // info = first global
+        int strOff = buf.Count; buf.AddRange(strtab.ToArray());
+        headers.Add((Name(".strtab"), 3, 0, 0, strOff, strtab.Count, 0, 0, 1, 0));
+        int shstrIndex = headers.Count;
+        int shstrNameAt = Name(".shstrtab");
+        int shstrOff = buf.Count; buf.AddRange(shstr.ToArray());
+        headers.Add((shstrNameAt, 3, 0, 0, shstrOff, shstr.Count, 0, 0, 1, 0));
+
+        while (buf.Count % 8 != 0) buf.Add(0);
+        long shoff = buf.Count;
+        var sh = new ByteWriter();
+        foreach (var h in headers) {
+            sh.U32(h.Name); sh.U32(h.Type); sh.U64(h.Flags); sh.U64(h.Addr); sh.U64(h.Off); sh.U64(h.Size);
+            sh.U32(h.Link); sh.U32(h.Info); sh.U64(h.Align); sh.U64(h.EntSize);
+        }
+        buf.AddRange(sh.ToArray());
+        void Put(int at, long v, int n) { for (int i = 0; i < n; i++) buf[at + i] = (byte)(v >> (8 * i)); }
+        Put(0x28, shoff, 8);                 // e_shoff
+        Put(0x3a, 64, 2);                    // e_shentsize
+        Put(0x3c, headers.Count, 2);         // e_shnum
+        Put(0x3e, shstrIndex, 2);            // e_shstrndx
     }
 
     static long CodeGenBase(long codeVaddr) => codeVaddr;
@@ -132,7 +184,7 @@ static class Program {
     static int Usage(string? problem = null) {
         if (problem != null) Console.Error.WriteLine($"forgec: {problem}");
         Console.Error.WriteLine("usage:");
-        Console.Error.WriteLine("  forgec <build|run> <file.fg> [-o out] [--target win|linux|kernel] [-O0] [--no-bounds-check] [--interp /lib/ld-musl-x86_64.so.1]");
+        Console.Error.WriteLine("  forgec <build|run> <file.fg> [-o out] [--target win|linux|kernel] [-O0] [-g] [--no-bounds-check] [--interp /lib/ld-musl-x86_64.so.1]");
         Console.Error.WriteLine("  forgec check <file.fg>                  # lint: errors + warnings, no binary");
         Console.Error.WriteLine("  forgec complete <file.fg> <line> <col>  # autocomplete candidates at a position");
         return ExitUsage;
@@ -155,7 +207,7 @@ static class Program {
         string cmd = args[0], path = args[1];
         string outPath = Path.GetFileNameWithoutExtension(path);
         Target target = Target.Windows;   // Windows first, per the brief
-        bool optimize = true, bounds = true;
+        bool optimize = true, bounds = true, debugInfo = false;
         string? interp = null;
         for (int i = 2; i < args.Length; i++) {
             string a = args[i];
@@ -164,6 +216,7 @@ static class Program {
             if (a == "-o") outPath = args[++i];
             else if (a == "-O0") optimize = false;      // disable the optimizer (debugging / comparison)
             else if (a == "--no-bounds-check") bounds = false;   // unchecked array indexing
+            else if (a == "-g") debugInfo = true;                // DWARF (Linux) / PDB (Windows) debug info
             else if (a == "--interp") interp = args[++i];   // Linux dynamic loader (externs)
             else if (a == "--target") {
                 string t = args[++i];
@@ -176,6 +229,7 @@ static class Program {
             }
             else return Usage($"unknown option '{a}'");
         }
+        if (debugInfo && target == Target.Kernel) return Usage("-g is not supported for --target kernel yet");
         _currentFile = path;
         if (target == Target.Windows && !outPath.EndsWith(".exe")) outPath += ".exe";
         if (target == Target.Kernel && !outPath.EndsWith(".elf")) outPath += ".elf";
@@ -186,10 +240,15 @@ static class Program {
 
         try {
             var mod = Sources.Load(path, src);        // the file and everything it imports (Imports.cs)
-            var cg = new CodeGen(mod, target) { OptimizeEnabled = optimize, BoundsChecks = bounds };
+            var cg = new CodeGen(mod, target) { OptimizeEnabled = optimize, BoundsChecks = bounds, DebugInfo = debugInfo };
+            string pdbPath = Path.ChangeExtension(outPath, ".pdb");
+            if (debugInfo && target == Target.Windows) cg.PdbPath = Path.GetFullPath(pdbPath);
             if (interp != null) cg.LinuxInterp = interp;
             var image = cg.LowerToFile();
-            try { File.WriteAllBytes(outPath, image); }
+            try {
+                File.WriteAllBytes(outPath, image);
+                if (cg.PdbBytes != null) File.WriteAllBytes(pdbPath, cg.PdbBytes);
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
                 Console.Error.WriteLine($"forgec: cannot write {outPath}: {ex.Message}");
                 return 1;

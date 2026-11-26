@@ -25,6 +25,8 @@
     <Compile Include="Generics.cs" />
     <Compile Include="BoundsCheck.cs" />
     <Compile Include="Imports.cs" />
+    <Compile Include="DebugInfo.cs" />
+    <Compile Include="Pdb.cs" />
     <Compile Include="StdLib.cs" />
     <Compile Include="Pe.cs" />
     <Compile Include="Elf32.cs" />

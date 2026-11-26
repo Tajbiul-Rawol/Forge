@@ -1486,12 +1486,14 @@ sealed partial class CodeGen {
         if (opt) { AllocateRegisters(f); _frameless = FramelessSafe(f); }
 
         _a.Label(f.Name);
+        DbgFuncStart(f);               // -g: function range and declaration line (DebugInfo.cs)
         if (_frameless) {
             foreach (var r in _savedRegs) _a.PushR(r);
         } else {
             foreach (var r in _savedRegs) { _frame += 8; _saveSlot[r] = -_frame; }
             int frame = (_frame + 15) & ~15;   // 16-byte align
             _a.Prologue(frame);
+            if (_dbgFunc != null) _dbgFunc.FrameSize = frame;
             foreach (var r in _savedRegs) _a.StoreSlot(r, _saveSlot[r]);
         }
         // incoming register args (rdi,rsi,rdx,rcx) -> their register or stack slot
@@ -1513,6 +1515,7 @@ sealed partial class CodeGen {
             _a.MovRR(moves[k].dst, moves[k].src);
             moves.RemoveAt(k);
         }
+        DbgBodyStart();
         EmitBody(f.Body);
         // implicit return for void
         if (f.Ret == "void") {
@@ -1524,6 +1527,7 @@ sealed partial class CodeGen {
             _a.MovRaxImm(0); if (f.Throws != null) _a.MovRdxImm(1); EmitFuncEpilogue();
         }
         EmitBoundsStubs();             // cold out-of-range paths (BoundsCheck.cs)
+        DbgFuncEnd(f);
     }
 
     // Restores the callee-saved registers this function used, then returns.
@@ -1581,6 +1585,7 @@ sealed partial class CodeGen {
     void EmitBody(List<Stmt> body) { foreach (var s in body) EmitStmt(s); }
 
     void EmitStmt(Stmt s) {
+        DbgRow(s.Line);
         switch (s) {
             case VarDecl v: EmitAssign(v.Name, v.E); break;
             case Assign a:  EmitAssign(a.Name, a.E); break;
@@ -1642,7 +1647,7 @@ sealed partial class CodeGen {
                 _a.Label(top);
                 EmitBody(w.Body);
                 if (forever) _a.JmpRel(top);
-                else { _a.Label(test); EmitJump(w.Cond, true, top); }
+                else { _a.Label(test); DbgRow(w.Line); EmitJump(w.Cond, true, top); }
                 break;
             }
             case ForStmt f: {
@@ -1653,7 +1658,7 @@ sealed partial class CodeGen {
                 EmitBody(f.Body);
                 if (f.Step != null) EmitStmt(f.Step);
                 if (f.Cond == null) _a.JmpRel(top);
-                else { _a.Label(test); EmitJump(f.Cond, true, top); }
+                else { _a.Label(test); DbgRow(f.Line); EmitJump(f.Cond, true, top); }
                 break;
             }
         }
@@ -3671,7 +3676,24 @@ sealed partial class CodeGen {
         foreach (var (codePos, label) in _a.CodeAddrFixups)
             PatchU64(code, codePos, textBase + _a.Labels[label]);
         long entry = Pe.ImageBase + (Pe.SectAlignPublic) + 0; // _start is first byte of .text
-        return Pe.Build(code, stringBlob, lay, entry);
+        if (!DebugInfo) return Pe.Build(code, stringBlob, lay, entry);
+        // -g: unwind info, the debug directory and the PDB (Pdb.cs). They go after the code,
+        // so the layout is planned again with the longer .text (string addresses move).
+        int textLen = code.Length;
+        var withDebug = new List<byte>(code);
+        var wd = AppendWinDebug(withDebug, lay._textRva, lay._headers);
+        var lay2 = Pe.PlanLayout(withDebug.Count, stringBlob.Length, _usesNet);
+        if (lay2.DataVaddr != lay.DataVaddr) {
+            foreach (var (codePos, dataOff) in _strRelocs) PatchU64(code, codePos, lay2.StringAddr(dataOff));
+            foreach (var (codePos, idx) in _iatRelocs) PatchU64(code, codePos, lay2.IatSlot(idx));
+            foreach (var (codePos, which) in _slotRelocs)
+                PatchU64(code, codePos, which switch { 0 => lay2.HandleAddr, 1 => lay2.ScratchAddr, 2 => lay2.HeapPtrAddr, _ => lay2.HeapBaseAddr });
+        }
+        var full = withDebug.ToArray();
+        Array.Copy(code, full, code.Length);
+        var image = Pe.Build(full, stringBlob, lay2, entry, wd.PdataOff, wd.PdataLen, wd.DebugDirOff);
+        PdbBytes = BuildPdb(image[Pe.SectionHeadersOffset..(Pe.SectionHeadersOffset + 80)], textLen);
+        return image;
     }
 
     // Build a Multiboot1 ELF32 kernel: [multiboot header][32-bit long-mode stub]
@@ -3860,10 +3882,12 @@ sealed partial class CodeGen {
             PatchU64(code, codePos, CODE_VADDR + _a.Labels[label]);
 
         long heapMemSize = Pe.HeapSize;
-        if (dyn == null) return Elf.Build(code, CODE_VADDR, data, _dataVaddr, CODE_VADDR, heapBaseOff + (int)heapMemSize);
+        var debug = DebugInfo ? DwarfSections(CODE_VADDR, code.Length) : null;     // -g (DebugInfo.cs)
+        var syms = DebugInfo ? ElfSymbols(CODE_VADDR) : null;
+        if (dyn == null) return Elf.Build(code, CODE_VADDR, data, _dataVaddr, CODE_VADDR, heapBaseOff + (int)heapMemSize, debug: debug, symbols: syms);
         var d = dyn.Value;
         return Elf.Build(code, CODE_VADDR, data, _dataVaddr, CODE_VADDR, heapBaseOff + (int)heapMemSize,
-                         d.InterpOff, d.InterpLen, d.DynOff, d.DynLen);
+                         d.InterpOff, d.InterpLen, d.DynOff, d.DynLen, debug, syms);
     }
 
     // The tables the dynamic loader (ld.so) needs to fill the GOT: interpreter path,

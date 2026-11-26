@@ -1,0 +1,32 @@
+Breakpoint 1: file examples/debugme.fg, line 10.
+Breakpoint 2: file examples/debugme.fg, line 15.
+
+Breakpoint 1, Area (p=, scale=2) at examples/debugme.fg:10
+10	    int h = p.Y * scale;
+#0  Area (p=, scale=2) at examples/debugme.fg:10
+#1  Main () at examples/debugme.fg:29
+#2  _start ()
+$1 = 2
+$2 = 6
+$3 = {X = 3, Y = 4}
+$4 = 6
+
+Breakpoint 2, SumTo (n=4) at examples/debugme.fg:15
+15	    int total = 0;
+16	    for (int i = 1; i <= n; i++) {
+17	        total += i;
+16	    for (int i = 1; i <= n; i++) {
+total = 1
+i = 1
+Main () at examples/debugme.fg:30
+30	    int s = SumTo(4);
+Value returned is $5 = 10
+$6 = 48
+$7 = "forge"
+$8 = 2.5
+$9 = true
+$10 = 9
+58
+forge 2.5
+[Inferior 1 (process N) exited normally]
+exit: 0

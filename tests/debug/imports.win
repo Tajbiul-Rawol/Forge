@@ -1,0 +1,13 @@
+# Debug info across files: a breakpoint in an imported file, a backtrace through two files.
+break geometry.fg:9
+break Corner
+run
+bt
+print a
+print b
+print dx
+continue
+bt
+print k
+finish
+continue
