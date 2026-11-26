@@ -1,2 +1,2 @@
 # The bounds check reports over serial and halts: give it time to finish.
-wait 2
+wait 4

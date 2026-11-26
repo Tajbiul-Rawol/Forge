@@ -31,6 +31,7 @@ forgec/
 ├── CodeGen.cs         <- type checker + machine-code generation + register allocator
 ├── Optimizer.cs       <- inlining, tail-recursion elimination, partial inlining, folding
 ├── BoundsCheck.cs     <- array bounds checks (inline compare + out-of-line error report)
+├── Imports.cs         <- multi-file programs: import "file.fg", file:line locations
 ├── Threads.cs         <- spawn/join, per-thread heap arenas, atomics, locks (Windows + Linux)
 ├── InlineAsm.cs       <- the asm("...") assembler (Intel syntax)
 ├── AsyncRuntime.cs    <- async/await: coroutine scheduler (written in Forge) + docs
@@ -43,6 +44,7 @@ forgec/
     ├── arrays.fg      <- heap arrays: sieve of Eratosthenes + sums
     ├── bounds.fg      <- array bounds checks (ends with an out-of-range store)
     ├── bounds_loop.fg <- an off-by-one loop stopped by the bounds check
+    ├── imports.fg     <- a program in three files (imports lib/geometry.fg and lib/text.fg)
     ├── turing.fg      <- a Turing machine (binary increment) on an array tape
     ├── lowlevel.fg    <- pointers, sized memory access, hex, MMIO-style register writes
     ├── uart.fg        <- a UART serial-port driver (register map, status polling, bit ops)
@@ -251,7 +253,8 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
 
 ## The language this compiler accepts
 
-- `module name;` followed by function definitions
+- `module name;`, then any `import "file.fg";` lines (see "Multi-file programs"), then
+  function, struct and extern definitions
 - types: `int`, `uint`, `ushort`, `long`, `bool`, `string`, `void`
   (all integers are 64-bit at the machine level), and `double` (see "Floating point")
 - `var` with inferred type, typed locals, assignment
@@ -325,6 +328,36 @@ Rules for the new statement forms:
 
 `float` (32-bit), classes with inheritance, interfaces and generic constraints,
 `own`/`move` and destructors, `comptime`, `gc`. Keep `.fg` files within the subset above.
+
+## Multi-file programs
+
+A program can be split over several files. Imports come right after the `module` line,
+and paths are relative to the file that imports them:
+
+```
+module shapes;
+
+import "lib/geometry.fg";      // struct Point, Dist2, Corner, ...
+import "lib/text.fg";
+
+void Main() {
+    Point a = new Point { X = 1, Y = 2 };
+    Console.WriteLine(Dist2(a, new Point { X = 4, Y = 6 }));
+}
+```
+
+- **One program.** Every file's functions, structs, generics and externs are compiled
+  together into one executable, in a single global namespace (as in one C# assembly).
+  Order doesn't matter: a file can use types and functions from any file in the program.
+- **Transitive, loaded once.** An imported file's own imports are loaded too. Each file is
+  read once however many files import it, so two files may import each other.
+- **Errors name their file.** Errors and warnings print as `lib/geometry.fg:20: error: ...`.
+  A name defined in two files is an error that points at both. A bounds-check failure
+  in an imported file says `(geometry.fg line 20)`.
+- **Every file starts with `module name;`.** Only one file may define `Main`.
+- `forgec build`, `run` and `check` all follow imports, and `complete` offers names from
+  imported files.
+- See `examples/imports.fg`, `examples/lib/` and `tests/errors/import_*.fg`.
 
 ## Array bounds checks
 

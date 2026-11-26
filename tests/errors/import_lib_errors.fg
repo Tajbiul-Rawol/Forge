@@ -1,0 +1,12 @@
+module import_lib_errors;
+
+// Errors in an imported file are reported with that file's name and line.
+
+import "lib/bad_types.fg";
+
+int Twice(int x) { return x * 2; }
+
+void Main() {
+    Console.WriteLine(Twice(Half(8)));
+    int unused = 3;
+}

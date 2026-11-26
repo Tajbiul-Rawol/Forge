@@ -75,15 +75,19 @@ sealed partial class CodeGen {
         ExtractGenerics(mod);                    // templates out; generic struct types used by the program in (Generics.cs)
         foreach (var f in mod.Funcs) {
             if (!_funcs.TryAdd(f.Name, f))
-                throw new ForgeException($"duplicate function '{f.Name}'", f.Line);
+                throw new ForgeException($"duplicate function '{f.Name}'" + FirstAt(_funcs[f.Name].Line, f.Line), f.Line);
         }
         foreach (var sd in mod.Structs)
             if (!_structs.TryAdd(sd.Name, new StructInfo(sd)))
-                throw new ForgeException($"duplicate struct '{sd.Name}'", sd.Line);
+                throw new ForgeException($"duplicate struct '{sd.Name}'" + FirstAt(_structs[sd.Name].Decl.Line, sd.Line), sd.Line);
         foreach (var sd in mod.Structs) LayoutStruct(_structs[sd.Name]);
         SetupExterns();
         _registered = true;                      // generic instances made from now on register themselves
     }
+
+    // " (first defined at geometry.fg:4)" when a duplicate comes from another file
+    static string FirstAt(int first, int dup) =>
+        Sources.FileOf(first) != Sources.FileOf(dup) ? $" (first defined at {Sources.Loc(first)})" : "";
 
     // ---- externs: functions in DLLs / shared libraries ------------------------------
     readonly Dictionary<string, ExternDecl> _externs = new();
@@ -95,7 +99,8 @@ sealed partial class CodeGen {
         foreach (var ex in _mod.Externs) {
             if (_target == Target.Kernel) throw new ForgeException($"extern '{ex.Name}': there are no libraries on bare metal", ex.Line);
             if (_funcs.ContainsKey(ex.Name) || !_externs.TryAdd(ex.Name, ex))
-                throw new ForgeException($"duplicate function '{ex.Name}'", ex.Line);
+                throw new ForgeException($"duplicate function '{ex.Name}'"
+                    + FirstAt(_funcs.TryGetValue(ex.Name, out var df) ? df.Line : _externs[ex.Name].Line, ex.Line), ex.Line);
             if (ex.Params.Count > 12) throw new ForgeException($"extern '{ex.Name}': at most 12 parameters", ex.Line);
         }
         if (_target == Target.Windows) {

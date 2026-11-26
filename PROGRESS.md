@@ -17,6 +17,7 @@ bare-metal software (OSes, firmware).
 | `Frontend.cs` | Lexer, AST, parser (structs, methods, extern, interrupt, asm), and `MethodScope`, which rewrites bare field names inside methods to `this.field` |
 | `CodeGen.cs` | Type checker, struct lowering, code generator, register allocator, runtime routines, PE/ELF/kernel layout |
 | `Optimizer.cs` | Tail-recursion elimination, inlining (2 rounds), partial inlining, constant folding, loop-invariant `.length` hoisting; `Walker`, `AstCopier` |
+| `Imports.cs` | Multi-file programs: `Sources.Load` follows `import "x.fg";`, `Sources.Loc` prints file:line |
 | `BoundsCheck.cs` | Array bounds checks: the inline compare, cold stubs, `bounds_fail` |
 | `Threads.cs` | spawn/join, per-thread arenas, region cache, atomics, SRWLOCK/futex lock, `heapmark` support (`arena_reset_to`) |
 | `InlineAsm.cs` | The `asm("...")` mini assembler (Intel syntax) |
@@ -107,6 +108,13 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - `switch` becomes `VarDecl sw$N = subject` (skipped for a plain variable) plus an if/else-if chain; default is the final else. Constant labels only, duplicates and fall-through are errors (C# rules).
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
+
+### Session: multi-file programs (2026-11-26)
+- `Imports.cs`: `import "path.fg";` lines after `module x;` (paths relative to the importing file, transitive, each file once by full path, cycles fine). All files merge into one ModuleNode: one global namespace.
+- Locations: file f is lexed with lines starting at `(f << 20) + 1` (`Sources.FileShift`), so every node and every inlined/generic copy carries its file in `Line`. The main file is file 0: single-file programs compile byte-identically (78 example binaries compared with main). `Sources.Loc(line)` prints `file:line` in the driver; `bounds_fail$f` per file prints `(geometry.fg line 20)`.
+- Parsing: a scan `Parser` over every file's tokens collects struct and generic names (`StructNames`, `outer`), then each file gets its own parser, so a missing `}` is reported in its own file.
+- Duplicates across files say `(first defined at file:line)`. `check` and `complete` follow imports too.
+- Tests: `examples/imports.fg` (+ `examples/lib/`), `tests/errors/import_{missing,late,syntax,lib_errors,lib_syntax,duplicate}.fg`. The bounds_loop boot script now waits 4 s (2 s was flaky under a full suite).
 
 ### Session: array bounds checks (2026-11-26)
 - `BoundsCheck.cs`: every array `a[i]` / `a[i] = v` is checked. The hot path is `cmp idx, [arr-8]` + `jae` (unsigned, so negative indexes fail too) with no scratch register; `a[i+k]` adds k to the index register around the compare, a constant index compares the length with an immediate. Each site has a cold stub after its function (push index, push length, line in rdx) that jumps to the shared `bounds_fail`, which prints `Index i is out of range for an array of length n (line L)` and exits 1. Runtime (`IsRuntime`) code, pointers and strings are not checked. `--no-bounds-check` turns it off.

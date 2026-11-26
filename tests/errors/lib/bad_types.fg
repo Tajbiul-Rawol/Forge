@@ -1,0 +1,7 @@
+module bad_types;
+
+int Half(int x) { return x / 2; }
+
+bool Broken() { return 1 + "a"; }
+
+string Name() { return missing; }

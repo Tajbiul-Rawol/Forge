@@ -1,0 +1,9 @@
+module import_duplicate;
+
+// A function defined in two files: the error points at the second and names the first.
+
+import "lib/helpers.fg";
+
+int Helper() { return 2; }
+
+void Main() { Console.WriteLine(Helper()); }

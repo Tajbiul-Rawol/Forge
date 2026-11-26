@@ -1,0 +1,4 @@
+module unclosed;
+
+int Helper() {
+    return 1;

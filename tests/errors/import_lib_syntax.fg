@@ -1,0 +1,5 @@
+module import_lib_syntax;
+
+import "lib/unclosed.fg";
+
+void Main() { Console.WriteLine(Helper()); }

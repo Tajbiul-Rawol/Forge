@@ -1,0 +1,15 @@
+module text;
+
+import "geometry.fg";
+
+string Bracket(string s) { return "(" + s + ")"; }
+
+string Banner(string name) {
+    Point origin = new Point { X = 0, Y = 0 };
+    return "== " + name + " at " + Describe(origin) + " ==";
+}
+
+T Pick<T>(bool first, T a, T b) {
+    if (first) { return a; }
+    return b;
+}

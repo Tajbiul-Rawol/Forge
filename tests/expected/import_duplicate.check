@@ -1,0 +1,3 @@
+lib/helpers.fg:3: error: duplicate function 'Helper' (first defined at import_duplicate.fg:7)
+import_duplicate.fg: 1 error.
+exit: 1

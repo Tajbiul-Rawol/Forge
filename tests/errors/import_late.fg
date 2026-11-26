@@ -1,0 +1,5 @@
+module import_late;
+
+void Main() { }
+
+import "lib/helpers.fg";
