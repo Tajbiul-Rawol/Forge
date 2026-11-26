@@ -1,0 +1,5 @@
+import_syntax_both.fg:8:21: error: expected ')' but found ';'
+lib/syntax_lib.fg:4:17: error: missing ';' after 'n'
+lib/syntax_lib.fg:7:30: error: unexpected token ';' in expression
+import_syntax_both.fg: 3 errors.
+exit: 1

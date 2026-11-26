@@ -11,8 +11,9 @@ Each item needs its tests in `tests/run.sh` and its documentation in `README.md`
       `examples/bounds.fg`, `examples/bounds_loop.fg`)
 - [x] **2. Multi-file programs.** One `.fg` file can import another: `import "lib/x.fg";`.
       (`Imports.cs`, `examples/imports.fg`, `tests/errors/import_*.fg`)
-- [ ] **3. Better errors.** Errors carry line and column, and the parser reports more than
-      one syntax error.
+- [x] **3. Better errors.** Errors carry line and column, and the parser reports more than
+      one syntax error. (`Sources` position table, `Parser.Record`/`Sync`,
+      `tests/errors/syntax_many.fg`, `tests/errors/import_syntax_both.fg`)
 - [ ] **4. Debug info.** A compiled program can be stepped through in a debugger (PDB on
       Windows, DWARF on Linux).
 - [ ] **5. Indexers.** `list[i]` and `dict[key]` on `List<T>` and `Dictionary<K,V>`.

@@ -1,5 +1,5 @@
-multi_errors.fg:4: error: use of undeclared variable 'y' (did you mean 'x'?)
-multi_errors.fg:9: error: unknown function 'Twicee' (did you mean 'Twice'?)
-multi_errors.fg:12: error: '-' needs integers
+multi_errors.fg:4:31: error: use of undeclared variable 'y' (did you mean 'x'?)
+multi_errors.fg:9:27: error: unknown function 'Twicee' (did you mean 'Twice'?)
+multi_errors.fg:12:15: error: '-' needs integers
 multi_errors.fg: 3 errors.
 exit: 1

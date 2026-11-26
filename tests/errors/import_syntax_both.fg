@@ -1,0 +1,10 @@
+module import_syntax_both;
+
+// Syntax errors in the main file and in an imported file are all reported, in file order.
+
+import "lib/syntax_lib.fg";
+
+void Main() {
+    int x = Square(3;
+    Console.WriteLine(x);
+}

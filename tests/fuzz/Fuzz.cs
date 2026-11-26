@@ -102,6 +102,7 @@ static class Fuzz {
         string detail = "compile did not finish in " + TimeoutMs + " ms";
         var t = new Thread(() => {
             try {
+                Sources.Reset();                     // one position table per compile
                 var mod = new Parser(new Lexer(src).Lex()).ParseModule();
                 var cg = new CodeGen(mod, target) { OptimizeEnabled = opt };
                 cg.LowerToFile();

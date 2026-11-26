@@ -15,38 +15,43 @@ namespace ForgeC;
 // once (so cycles are fine), and every file's functions, structs and externs go into
 // one program: there is a single global namespace, as in one C# assembly.
 //
-// Locations: file number f's lines are numbered from (f << FileShift) + 1, so every
-// node, and every copy the inliner or the generics make of it, carries its file in
-// its Line. The main file is file 0, so its lines are plain line numbers and a
-// single-file program compiles exactly as before. Sources.Loc(line) prints "file:line".
+// Locations: a node's Line is a position id, an index into a table of (file, line,
+// column) that the lexer fills in, one entry per token. Every node, and every copy the
+// inliner or the generics make of it, so carries its file and column. Ids grow in
+// source order (the main file is lexed first), so sorting by Line sorts by place.
+// Sources.Loc(id) prints "file:line:col". Id 0 means "no position".
 static class Sources {
-    public const int FileShift = 20;                         // up to 1,048,575 lines per file
-    const int LineMask = (1 << FileShift) - 1;
-    const int MaxFiles = 1 << (30 - FileShift);
     public static readonly List<string> Files = new();       // display path, by file number
+    static readonly List<(int File, int Line, int Col)> _pos = new() { (0, 0, 0) };
 
-    public static int FileOf(int line) => line >> FileShift;
-    public static int LineOf(int line) => line & LineMask;
-    public static string Loc(int line) {
-        int f = FileOf(line);
-        return f < Files.Count ? $"{Files[f]}:{LineOf(line)}" : $"{LineOf(line)}";
+    // locked: the fuzzer may still have a timed-out compile running on another thread
+    public static int NewPos(int file, int line, int col) { lock (_pos) { _pos.Add((file, line, col)); return _pos.Count - 1; } }
+    static (int File, int Line, int Col) At(int id) { lock (_pos) return id > 0 && id < _pos.Count ? _pos[id] : (0, 0, 0); }
+    public static int FileOf(int id) => At(id).File;
+    public static int LineOf(int id) => At(id).Line;
+    public static int ColOf(int id) => At(id).Col;
+    // sort key in source order (ids are not: tokens inside $"{...}" holes are lexed later)
+    public static (int, int, int) Order(int id) => At(id);
+    public static string Loc(int id) {
+        var (f, l, c) = At(id);
+        string file = f < Files.Count ? Files[f] + ":" : "";
+        return c > 0 ? $"{file}{l}:{c}" : $"{file}{l}";
     }
+    // a fresh table (one per compile; the fuzzer compiles thousands of programs)
+    public static void Reset() { lock (_pos) { Files.Clear(); _pos.RemoveRange(1, _pos.Count - 1); } }
 
     // Reads the main file's imports (transitively) and parses everything into one module.
     public static ModuleNode Load(string path, string src) {
-        Files.Clear();
+        Reset();
         var canon = new List<string>();
         var toks = new List<List<Tok>>();
-        void Add(string display, string text, int importLine) {
-            if (Files.Count >= MaxFiles) throw new ForgeException($"too many imported files (at most {MaxFiles})", importLine);
-            if (text.Count(c => c == '\n') >= LineMask)
-                throw new ForgeException($"'{display}' is too long (at most {LineMask - 1} lines)", importLine);
+        void Add(string display, string text) {
             int id = Files.Count;
             Files.Add(display);
             canon.Add(Canonical(display));
-            toks.Add(new Lexer(text, (id << FileShift) + 1).Lex());
+            toks.Add(new Lexer(text, id).Lex());
         }
-        Add(path, src, 1);
+        Add(path, src);
         for (int i = 0; i < toks.Count; i++) {
             foreach (var (rel, line) in ImportsOf(toks[i])) {
                 string display = Combine(Files[i], rel);
@@ -57,7 +62,7 @@ static class Sources {
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
                     throw new ForgeException($"cannot read imported file '{rel}': {ex.Message}", line);
                 }
-                Add(display, text, line);
+                Add(display, text);
             }
         }
         if (toks.Count == 1) return new Parser(toks[0]).ParseModule();
@@ -68,7 +73,13 @@ static class Sources {
         var all = toks.SelectMany(t => t.Where(x => x.Kind != TokKind.Eof)).ToList();
         all.Add(toks[0][^1]);
         var scan = new Parser(all);
-        var mods = toks.Select(t => new Parser(t, scan.StructNames, scan).ParseModule()).ToList();
+        var mods = new List<ModuleNode>();
+        var errors = new List<Diagnostic>();             // syntax errors from every file
+        foreach (var t in toks) {
+            try { mods.Add(new Parser(t, scan.StructNames, scan).ParseModule()); }
+            catch (ForgeErrors fe) { errors.AddRange(fe.Errors); }
+        }
+        if (errors.Count > 0) throw new ForgeErrors(errors.OrderBy(e => Order(e.Line)).Take(CodeGen.MaxErrors).ToList());
         var m = mods[0];
         foreach (var other in mods.Skip(1)) {
             m.Funcs.AddRange(other.Funcs);

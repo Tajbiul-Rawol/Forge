@@ -324,12 +324,12 @@ static class Program {
             foreach (var f in mod.Funcs) candidates.Add(f.Name);
             // enclosing function = greatest start line <= cursor line, in this file (file 0)
             Func? enc = null;
-            foreach (var f in mod.Funcs) if (Sources.FileOf(f.Line) == 0 && f.Line <= line && (enc == null || f.Line > enc.Line)) enc = f;
+            foreach (var f in mod.Funcs) if (Sources.FileOf(f.Line) == 0 && Sources.LineOf(f.Line) <= line && (enc == null || f.Line > enc.Line)) enc = f;
             if (enc != null) {
                 foreach (var (_, n) in enc.Params) candidates.Add(n);
                 CollectLocalsBefore(enc.Body, line, candidates);
             }
-        } catch (ForgeException) {
+        } catch (Exception e) when (e is ForgeException or ForgeErrors) {
             // file may still be mid-edit / invalid; offer keywords, types, and visible names
         }
 
@@ -340,7 +340,7 @@ static class Program {
     static void CollectLocalsBefore(System.Collections.Generic.List<Stmt> body, int line, System.Collections.Generic.List<string> outNames) {
         foreach (var s in body) {
             switch (s) {
-                case VarDecl v when v.Line < line: outNames.Add(v.Name); break;
+                case VarDecl v when Sources.LineOf(v.Line) < line: outNames.Add(v.Name); break;
                 case IfStmt i: CollectLocalsBefore(i.Then, line, outNames); if (i.Else != null) CollectLocalsBefore(i.Else, line, outNames); break;
                 case WhileStmt w: CollectLocalsBefore(w.Body, line, outNames); break;
             }

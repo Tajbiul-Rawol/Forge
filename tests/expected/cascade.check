@@ -1,4 +1,4 @@
-cascade.fg:7: error: unknown function 'Squre' (did you mean 'Square'?)
-cascade.fg:11: error: use of undeclared variable 'missing'
+cascade.fg:7:13: error: unknown function 'Squre' (did you mean 'Square'?)
+cascade.fg:11:23: error: use of undeclared variable 'missing'
 cascade.fg: 2 errors.
 exit: 1

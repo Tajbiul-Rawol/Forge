@@ -1,0 +1,28 @@
+module syntax_many;
+
+// Several syntax errors: each is reported, and the parser carries on after it.
+
+int Add(int a, int b) {
+    int s = a + ;
+    return s;
+}
+
+int Mul(int a, int b {
+    return a * b;
+}
+
+void Main() {
+    int x = 4
+    int y = 5;
+    if (x > ) {
+        Console.WriteLine("big");
+    }
+    while (y > 0) {
+        y = y - 1;
+        Console.WriteLine(y));
+    }
+    for (int i = 0; i < ; i++) { }
+    Console.WriteLine(Add(x, y));
+}
+
+struct Point { int X; int }

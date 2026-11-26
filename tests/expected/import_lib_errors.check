@@ -1,4 +1,4 @@
-lib/bad_types.fg:5: error: '+' needs integers
-lib/bad_types.fg:7: error: use of undeclared variable 'missing'
+lib/bad_types.fg:5:26: error: '+' needs integers
+lib/bad_types.fg:7:24: error: use of undeclared variable 'missing'
 import_lib_errors.fg: 2 errors.
 exit: 1

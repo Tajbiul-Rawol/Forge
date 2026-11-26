@@ -1,3 +1,3 @@
-cf_fallthrough.fg:7: error: switch section falls through to the next one: end it with 'break', 'return', 'continue' or 'throw'
+cf_fallthrough.fg:7:9: error: switch section falls through to the next one: end it with 'break', 'return', 'continue' or 'throw'
 cf_fallthrough.fg: 1 error.
 exit: 1

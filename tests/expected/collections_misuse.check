@@ -1,8 +1,8 @@
-collections_misuse.fg:6: error: List<Point>.Sort() needs elements that can be compared (numbers or strings), not Point
-collections_misuse.fg:7: error: foreach needs an array, a string or a List<T>, got int
-collections_misuse.fg:8: error: foreach variable 's' is string, but the elements are int
-collections_misuse.fg:10: error: string has no method 'Containz' (did you mean 'Contains'?)
-collections_misuse.fg:11: error: string.Substring takes 1 or 2 argument(s), got 3
-collections_misuse.fg:13: error: struct Dictionary<string,int> has no method 'Frob'
+collections_misuse.fg:6:8: error: List<Point>.Sort() needs elements that can be compared (numbers or strings), not Point
+collections_misuse.fg:7:5: error: foreach needs an array, a string or a List<T>, got int
+collections_misuse.fg:8:5: error: foreach variable 's' is string, but the elements are int
+collections_misuse.fg:10:15: error: string has no method 'Containz' (did you mean 'Contains'?)
+collections_misuse.fg:11:17: error: string.Substring takes 1 or 2 argument(s), got 3
+collections_misuse.fg:13:6: error: struct Dictionary<string,int> has no method 'Frob'
 collections_misuse.fg: 6 errors.
 exit: 1

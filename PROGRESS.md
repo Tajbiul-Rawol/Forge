@@ -17,7 +17,7 @@ bare-metal software (OSes, firmware).
 | `Frontend.cs` | Lexer, AST, parser (structs, methods, extern, interrupt, asm), and `MethodScope`, which rewrites bare field names inside methods to `this.field` |
 | `CodeGen.cs` | Type checker, struct lowering, code generator, register allocator, runtime routines, PE/ELF/kernel layout |
 | `Optimizer.cs` | Tail-recursion elimination, inlining (2 rounds), partial inlining, constant folding, loop-invariant `.length` hoisting; `Walker`, `AstCopier` |
-| `Imports.cs` | Multi-file programs: `Sources.Load` follows `import "x.fg";`, `Sources.Loc` prints file:line |
+| `Imports.cs` | Multi-file programs: `Sources.Load` follows `import "x.fg";`, `Sources` position table (file, line, col per token); `Sources.Loc` prints file:line:col |
 | `BoundsCheck.cs` | Array bounds checks: the inline compare, cold stubs, `bounds_fail` |
 | `Threads.cs` | spawn/join, per-thread arenas, region cache, atomics, SRWLOCK/futex lock, `heapmark` support (`arena_reset_to`) |
 | `InlineAsm.cs` | The `asm("...")` mini assembler (Intel syntax) |
@@ -108,6 +108,13 @@ Use: `dotnet bin\Release\net10.0\forgec.dll build file.fg -o out.exe --target wi
   - `switch` becomes `VarDecl sw$N = subject` (skipped for a plain variable) plus an if/else-if chain; default is the final else. Constant labels only, duplicates and fall-through are errors (C# rules).
   - Functions that use break/continue contain labels, so `InlineSafe` does not inline them.
 - All 164 existing example binaries are byte-identical after the change. New: `examples/control_flow.fg`, `tests/errors/cf_*.fg`.
+
+### Session: better errors (2026-11-26)
+- Positions: a node's `Line` is now a position id, an index into `Sources`' table of (file, line, column), one entry per token (`Lexer.P()`, `_tokStart`/`_lineStart`). This replaced the `file << 20` line encoding from the imports session. Every node and every inlined or generic copy carries its column with no parser changes. Interpolation holes are lexed with the string's file/line and its column + offset. Errors print `file:line:col`; errors are sorted with `Sources.Order` (ids aren't in source order: hole tokens are lexed later). `Sources.Reset()` per compile (the fuzzer calls it; access is locked because a timed-out fuzz compile may still run).
+- Syntax error recovery: `ParseBlock` and the top-level loop (`ParseDecl`) catch an error, `Record` it, and `Sync(start)`: brackets are counted from the statement's first token, so it skips past the statement's `;` or its `{...}` body, stops at the enclosing block's `}`, and a `{` drops unclosed parentheses (`int F(int a {`). `AtBoundary` skips nothing when the error was found after a whole statement was read (duplicate case, interrupt signature), only if ( [ { are all closed again. An error at end of file stops parsing (`StopParsing`). Max 20; syntax errors from all files are merged. Any syntax error: no type check.
+- A missing `;` at the end of a line is reported there: `missing ';' after '4'`.
+- All `.check` baselines gained columns and nothing else, except `no_main` (now points at the `module` line, 2:1). 80 example binaries are byte-identical to main.
+- New tests: `tests/errors/syntax_many.fg`, `tests/errors/import_syntax_both.fg`.
 
 ### Session: multi-file programs (2026-11-26)
 - `Imports.cs`: `import "path.fg";` lines after `module x;` (paths relative to the importing file, transitive, each file once by full path, cycles fine). All files merge into one ModuleNode: one global namespace.
@@ -222,7 +229,7 @@ Workflow: every change goes on a feature branch; run the tests before merging in
 
 - **Kernel target:** booted in QEMU (TCG) by the test suite, not on real hardware yet (no GRUB ISO). Serial input from a Windows pipe arrives without CR, so the shell is fed LF line endings. Interrupt handlers must not use `double` (it is not available on the kernel target anyway).
 - **glibc:** `extern` is tested on Ubuntu 24.04 (glibc 2.39) in CI and via `FORGE_DOCKER`; libc calls from Forge threads share the main thread's libc TLS (`fs`), so keep heavy libc use (printf, malloc) to one thread at a time.
-- Syntax errors stop the compile at the first one (type errors are all reported). Errors have a line but no column.
+- After a syntax error the type checker does not run, so type errors in the same compile appear only once the syntax is fixed.
 - `ioerr()` gives the OS error code, not a portable one: compare codes per OS, or just test `!= 0`. `try` on a builtin cannot tell you the code either (use `ioerr()` after it). `tcp_connect` on Linux takes IP addresses only (no DNS without libc); a host name fails with EINVAL (22).
 - Interrupt handlers must not allocate while interrupting code that also allocates (the allocator isn't reentrant).
 - C callbacks must run on the main thread or a Forge thread (they need Forge's thread pointer).

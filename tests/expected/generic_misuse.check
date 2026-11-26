@@ -1,7 +1,7 @@
-generic_misuse.fg:4: error: '>' needs numeric operands (in Max<string>)
-generic_misuse.fg:10: error: can't infer T for 'Make': write the type arguments, e.g. Make<int>(...)
-generic_misuse.fg:11: error: 'Max': T can't be both int and string; write Max<...>(...)
-generic_misuse.fg:12: error: 'Plain' is not generic: remove the <...> type arguments
-generic_misuse.fg:13: error: 'Max' takes 1 type argument(s), got 2
+generic_misuse.fg:4:28: error: '>' needs numeric operands (in Max<string>)
+generic_misuse.fg:10:13: error: can't infer T for 'Make': write the type arguments, e.g. Make<int>(...)
+generic_misuse.fg:11:14: error: 'Max': T can't be both int and string; write Max<...>(...)
+generic_misuse.fg:12:13: error: 'Plain' is not generic: remove the <...> type arguments
+generic_misuse.fg:13:23: error: 'Max' takes 1 type argument(s), got 2
 generic_misuse.fg: 5 errors.
 exit: 1
