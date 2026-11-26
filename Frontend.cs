@@ -38,7 +38,7 @@ sealed class Lexer {
         "i8","u8","i16","u16","i32","u32","i64","u64",
         "var","if","else","while","for","return","true","false","throws","throw","new","try","spawn",
         "async","await","struct","packed","null","extern",
-        "break","continue","switch","case","default"
+        "break","continue","switch","case","default","foreach"
     };
     static readonly string[] ThreeChar = { "<<=", ">>=" };
     static readonly string[] TwoChar = { "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
@@ -244,6 +244,11 @@ sealed class PrintStmt:Stmt { public Expr Arg = null!; } // Console.WriteLine
 sealed class LabelStmt:Stmt { public string Name = ""; }
 sealed class GotoStmt:Stmt { public string Name = ""; }
 sealed class InlineRet:Stmt { public Expr? E; public string End = ""; }
+// foreach (var x in coll) { ... }: lowered by the type checker to a for loop once the
+// collection's type (array, string, List<T>) is known
+sealed class ForeachStmt:Stmt { public string? DeclType; public string Name = ""; public Expr Coll = null!; public List<Stmt> Body = new(); }
+// several statements where one is expected (only produced by lowering; flattened at once)
+sealed class BlockStmt:Stmt { public List<Stmt> Body = new(); }
 // x++ / x-- / ++x / --x. Only valid as a whole statement (or a for step), where the parser
 // rewrites it to an assignment; anywhere else the type checker reports it.
 sealed class IncDecExpr: Expr { public Expr Target = null!; public string Op = ""; }
@@ -306,6 +311,9 @@ sealed class Parser {
                 if (k + 2 < t.Count && t[k + 2].Is(TokKind.Op, "<")) _genericStructs.Add(t[k + 1].Text);
             }
         }
+        // the standard library's types, unless the program declares its own of that name
+        foreach (var (n, generic) in new[] { ("List", true), ("Dictionary", true), ("StringBuilder", false) })
+            if (outer == null && !_structs.Contains(n)) { _structs.Add(n); if (generic) _genericStructs.Add(n); }
         // generic functions: at brace depth 0, Name < A, B > (
         int depth = 0;
         for (int k = 0; k < t.Count; k++) {
@@ -575,7 +583,7 @@ sealed class Parser {
 
     // Parse one statement; loops and switch may expand to several statements.
     void ParseStmtInto(List<Stmt> list) {
-        if (AtKw("while") || AtKw("for")) ParseLoop(list);
+        if (AtKw("while") || AtKw("for") || AtKw("foreach")) ParseLoop(list);
         else if (AtKw("switch")) ParseSwitch(list);
         else list.Add(ParseStmt());
     }
@@ -589,6 +597,18 @@ sealed class Parser {
             Expect(TokKind.Op, "("); var c = ParseExpr(); Expect(TokKind.Op, ")");
             _jumps.Add(jt); body = StmtAsList(); _jumps.RemoveAt(_jumps.Count - 1);
             loop = new WhileStmt { Line = line, Cond = c, Body = body };
+        } else if (Accept(TokKind.Kw, "foreach")) {
+            // foreach (var x in coll)  /  foreach (T x in coll)
+            Expect(TokKind.Op, "(");
+            string? dt = null;
+            if (!Accept(TokKind.Kw, "var")) dt = ParseType();
+            string vn = ExpectId().Text;
+            if (!Cur.Is(TokKind.Id, "in")) throw new ForgeException($"expected 'in' but found '{Cur.Text}'", Cur.Line);
+            Eat();
+            var coll = ParseExpr();
+            Expect(TokKind.Op, ")");
+            _jumps.Add(jt); body = StmtAsList(); _jumps.RemoveAt(_jumps.Count - 1);
+            loop = new ForeachStmt { Line = line, DeclType = dt, Name = vn, Coll = coll, Body = body };
         } else {
             Expect(TokKind.Kw, "for"); Expect(TokKind.Op, "(");
             // init: a declaration or assignment, terminated by ';'
@@ -945,7 +965,7 @@ sealed class Parser {
         }
         if (t.Kind == TokKind.Int)   { Eat(); return new IntLit   { Line = t.Line, Val = t.IntVal }; }
         if (t.Kind == TokKind.Float) { Eat(); return new FloatLit { Line = t.Line, Val = t.FloatVal }; }
-        if (t.Kind == TokKind.Str)   { Eat(); return ParseInterp(t.Text, t.Line); }
+        if (t.Kind == TokKind.Str)   { Eat(); return Postfix(ParseInterp(t.Text, t.Line)); }   // "a,b".Split(","), "abc".Length
         if (AtKw("true"))  { Eat(); return new BoolLit { Line = t.Line, Val = true }; }
         if (AtKw("false")) { Eat(); return new BoolLit { Line = t.Line, Val = false }; }
         if (AtKw("try")) {
@@ -1110,6 +1130,7 @@ sealed class MethodScope {
             case RetStmt r: if (r.E != null) r.E = Ex(r.E); return r;
             case ExprStmt es: es.E = Ex(es.E); return es;
             case PrintStmt p: p.Arg = Ex(p.Arg); return p;
+            case ForeachStmt fe: fe.Coll = Ex(fe.Coll); fe.Body = Body(fe.Body); return fe;
             default: return s;
         }
     }

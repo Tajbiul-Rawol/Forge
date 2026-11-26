@@ -1,0 +1,75 @@
+module collections;
+
+// The standard collections: List<T>, Dictionary<K, V>, StringBuilder, foreach, and
+// C#'s string methods. They are written in Forge itself, on top of generics.
+
+struct Item {
+    string name;
+    double price;
+}
+
+void Main() {
+    // List<T>: a growable array
+    var nums = new List<int> { };
+    int[] digits = new int[8];
+    digits[0] = 3; digits[1] = 1; digits[2] = 4; digits[3] = 1; digits[4] = 5; digits[5] = 9; digits[6] = 2; digits[7] = 6;
+    foreach (var d in digits) { nums.Add(d); }
+    nums.Sort();
+    Console.WriteLine($"{nums.Count} digits, sorted: {Join(nums)}");
+    nums.Remove(1);                                       // the first 1
+    nums.Insert(0, 100);
+    nums.RemoveAt(nums.Count - 1);
+    Console.WriteLine($"edited: {Join(nums)}  contains 5: {nums.Contains(5)}  index of 9: {nums.IndexOf(9)}");
+
+    // a list of structs
+    var cart = new List<Item> { };
+    cart.Add(new Item { name = "book", price = 12.5 });
+    cart.Add(new Item { name = "pen", price = 1.25 });
+    cart.Add(new Item { name = "lamp", price = 30 });
+    double total = 0;
+    foreach (var it in cart) { total += it.price; }
+    Console.WriteLine($"cart: {cart.Count} items, total {total:F2}");
+
+    // Dictionary<K, V>: counting words
+    string text = "the quick brown fox jumps over the lazy dog the end";
+    var counts = new Dictionary<string, int> { };
+    foreach (var w in text.Split(" ")) {
+        int c = 0;
+        counts.TryGetValue(w, &c);                       // c stays 0 for a new word
+        counts.Set(w, c + 1);
+    }
+    var words = counts.Keys();
+    words.Sort();
+    var sb = new StringBuilder { };
+    foreach (var w in words) {
+        if (counts.Get(w) > 1) { sb.Append($"{w}={counts.Get(w)} "); }
+    }
+    Console.WriteLine($"{counts.Count} distinct words; repeated: {sb.ToString().Trim()}");
+    Console.WriteLine($"has 'fox': {counts.ContainsKey("fox")}, has 'cat': {counts.ContainsKey("cat")}");
+
+    // integer keys, lots of them
+    var squares = new Dictionary<long, long> { };
+    for (long i = 0; i < 100000; i++) { squares.Set(i, i * i); }
+    Console.WriteLine($"squares: {squares.Count} entries, 99999^2 = {squares.Get(99999)}");
+
+    // string methods
+    string s = "  Forge: a C#-like language  ";
+    string t = s.Trim();
+    Console.WriteLine($"[{t}] length {t.Length}");
+    Console.WriteLine($"upper: {t.ToUpper()}  lower: {t.ToLower()}");
+    Console.WriteLine($"StartsWith(Forge): {t.StartsWith("Forge")}  EndsWith(language): {t.EndsWith("language")}  Contains(C#): {t.Contains("C#")}");
+    Console.WriteLine($"IndexOf(a): {t.IndexOf("a")}  Substring(7): {t.Substring(7)}  Substring(0, 5): {t.Substring(0, 5)}");
+    Console.WriteLine(t.Replace("language", "compiler"));
+    var parts = "2026-11-26".Split("-");
+    Console.WriteLine($"year {parts.Get(0)}, month {parts.Get(1)}, day {parts.Get(2)}");
+}
+
+// "a, b, c" from a list of ints
+string Join(List<int> xs) {
+    var sb = new StringBuilder { };
+    for (int i = 0; i < xs.Count; i++) {
+        if (i > 0) { sb.Append(", "); }
+        sb.Append(str(xs.Get(i)));
+    }
+    return sb.ToString();
+}

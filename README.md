@@ -260,7 +260,8 @@ analysis it needs (scopes, symbols, ranking) is already implemented here.
 - compound assignment `+= -= *= /= %= &= |= ^= <<= >>=` on variables, array
   elements, `*p` and struct fields; `x++` / `x--` / `++x` / `--x` as statements
   and as `for` steps (`for (int i = 0; i < n; i++)`)
-- `break` and `continue` in `while` and `for` loops
+- `break` and `continue` in `while`, `for` and `foreach` loops
+- `foreach (var x in coll)` over arrays, strings (their bytes) and `List<T>` (see "Collections and strings")
 - `switch` on an integer, string or bool, C#-style (see `examples/control_flow.fg`):
 
   ```csharp
@@ -378,6 +379,11 @@ void Main() {
 - Methods of a generic struct use the struct's type parameters; a method can't have
   type parameters of its own yet. Generic functions can't be `extern` callbacks or
   interrupt handlers.
+- A method of a generic struct is compiled only for the type arguments it is actually
+  called with, so a `List<Point>` is fine even though `Point`s can't be sorted, as long as
+  you don't call `Sort` on it.
+- The standard library already has a `List<T>` (see "Collections and strings"). A program
+  that declares its own `List`, like the example above, uses its own.
 
 ## Floating point (`double`)
 
@@ -417,6 +423,55 @@ Limits:
 - Speed: each operation moves its operands through SSE registers and back, so
   float-heavy loops currently run about 3-4x slower than .NET's JIT (a Mandelbrot
   loop: ~1.1 s vs ~0.3 s). Keeping doubles in SSE registers is planned.
+
+## Collections and strings
+
+`List<T>`, `Dictionary<K, V>`, `StringBuilder`, `foreach` and C#'s string methods, written in
+Forge on top of generics. See `examples/collections.fg`.
+
+```csharp
+var nums = new List<int> { };
+nums.Add(3); nums.Add(1); nums.Add(2);
+nums.Sort();
+foreach (var n in nums) { Console.WriteLine(n); }           // 1 2 3
+
+var counts = new Dictionary<string, int> { };
+foreach (var w in "the cat and the hat".Split(" ")) {
+    int c = 0;
+    counts.TryGetValue(w, &c);                              // c stays 0 for a new word
+    counts.Set(w, c + 1);
+}
+Console.WriteLine(counts.Get("the"));                       // 2
+
+var sb = new StringBuilder { };
+foreach (var k in counts.Keys()) { sb.Append(k); sb.Append(" "); }
+string s = sb.ToString().Trim().ToUpper();
+```
+
+**`List<T>`** (a growable array): `Add(x)`, `Get(i)`, `Set(i, x)`, `Insert(i, x)`, `RemoveAt(i)`,
+`Remove(x)`, `IndexOf(x)`, `Contains(x)`, `Clear()`, `Reverse()`, `Sort()` (numbers or strings,
+ordinal), `ToArray()`, and the field `Count`.
+
+**`Dictionary<K, V>`** (a hash table): `Set(key, value)`, `Get(key)`, `TryGetValue(key, &value)`,
+`ContainsKey(key)`, `Remove(key)`, `Clear()`, `Keys()` and `Values()` (as lists), and `Count`.
+Keys can be integers, strings, doubles or struct references (compared by identity).
+
+**`StringBuilder`**: `Append(s)`, `AppendLine(s)`, `Clear()`, `ToString()` and `Length`. Building
+a long string with it is linear; repeated `s = s + t` copies the whole string each time.
+
+**`foreach (var x in coll)`** (or `foreach (T x in coll)`) iterates an array, a `List<T>`, or the
+bytes of a string. `break` and `continue` work as in any loop.
+
+**String methods:** `s.Length`, `s.Contains(t)`, `s.IndexOf(t)` (-1 when absent),
+`s.StartsWith(t)`, `s.EndsWith(t)`, `s.Substring(start)`, `s.Substring(start, length)`,
+`s.ToUpper()`, `s.ToLower()` (ASCII), `s.Trim()`, `s.Replace(old, new)`, `s.Split(sep)` (a
+`List<string>`). They also work on literals: `"a,b".Split(",")`.
+
+- Where C# would throw (`Get` past the end, a missing key, `Substring` out of range), the
+  program prints what went wrong and exits with code 1.
+- C#'s `list[i]` and `dict[key]` indexers aren't available yet: use `Get` / `Set`.
+- Only the parts a program uses are compiled into it. A program that declares its own
+  `List`, `Dictionary` or `StringBuilder` uses its own.
 
 ## Math
 

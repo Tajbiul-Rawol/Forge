@@ -400,7 +400,7 @@ sealed partial class CodeGen {
             }
             case MemberExpr me: {
                 var ot = TypeOf(me.Obj);
-                if (me.Name == "length" && (IsArray(ot) || IsStr(ot))) return "int";
+                if (me.Name is "length" or "Length" && (IsArray(ot) || IsStr(ot))) return "int";   // C# spells it Length
                 if (!IsStruct(ot)) throw new ForgeException($"'.{me.Name}' needs a struct, got {ot}", me.Line);
                 return FieldOf(ot, me.Name, me.Line).Type;
             }
@@ -451,16 +451,20 @@ sealed partial class CodeGen {
                     return exd.Ret;
                 }
                 if (c.Name.StartsWith("Math.")) ResolveMathCall(c);   // Math.Sqrt(x) -> __sqrt, Math.Sin(x) -> __math_sin, ...
+                if (c.Name is "__hash" or "__less") ResolveLibDispatch(c);   // by argument type (StdLib.cs)
                 // a generic function: instantiate it (Generics.cs) and call the instance
                 if (c.TypeArgs != null || (!_funcs.ContainsKey(c.Name) && _genericFuncs.ContainsKey(c.Name))) ResolveGenericCall(c);
+                if (c.Name.StartsWith(".") && IsStr(TypeOf(c.Args[0]))) ResolveStringMethod(c);   // s.Contains(x) -> __str_contains(s, x)
                 if (c.Name.StartsWith(".")) {            // obj.Method(...) -> Struct.Method(obj, ...)
                     var ot = TypeOf(c.Args[0]);
                     if (!IsStruct(ot)) throw new ForgeException($"'{c.Name[1..]}()' needs a struct, got {ot}", c.Line);
                     string mname = ot + c.Name;
-                    if (!_funcs.ContainsKey(mname)) {
-                        var ms = _funcs.Keys.Where(k => k.StartsWith(ot + ".")).Select(k => k[(ot.Length + 1)..]);
-                        throw new ForgeException($"struct {ot} has no method '{c.Name[1..]}'" + Suggest.Hint(c.Name[1..], ms), c.Line);
-                    }
+                    // List<T>.Sort compares elements with <: say so here rather than inside the library
+                    if (c.Name == ".Sort" && _structInstances.TryGetValue(ot, out var lsi) && lsi.Template.Name == "List"
+                        && lsi.Map.Count == 1 && !IsNum(lsi.Map.Values.First()) && !IsStr(lsi.Map.Values.First()))
+                        throw new ForgeException($"{ot}.Sort() needs elements that can be compared (numbers or strings), not {lsi.Map.Values.First()}", c.Line);
+                    if (!_funcs.ContainsKey(mname) && !InstantiateMethod(ot, c.Name[1..]))
+                        throw new ForgeException($"struct {ot} has no method '{c.Name[1..]}'" + Suggest.Hint(c.Name[1..], MethodsOf(ot)), c.Line);
                     c.Name = mname;
                 }
                 if (_funcs.ContainsKey(c.Name)) goto userFunc;   // a program's own function shadows a builtin of the same name
@@ -789,7 +793,7 @@ sealed partial class CodeGen {
     void Report(ForgeException fe, Stmt? at) {
         // A failed declaration ignores its own name here: `var t = f(t)` must still
         // report, but `var b = a + 1` after a failed `a` is follow-on noise.
-        string? own = at is VarDecl vd && _poisonSources.Contains(at) ? vd.Name : null;
+        string? own = at == null || !_poisonSources.Contains(at) ? null : at is VarDecl vd ? vd.Name : at is ForeachStmt fo ? fo.Name : null;
         if (at != null && _poisoned.Count > 0 && MentionsPoisoned(at, own)) return;
         string msg = _cur?.InstanceOf != null && !fe.Message.Contains(" (in ") ? $"{fe.Message} (in {_cur.Name})" : fe.Message;
         if (Errors.Any(e => e.Line == fe.Line && e.Message == msg)) return;
@@ -883,6 +887,13 @@ sealed partial class CodeGen {
                 }
                 case IfStmt i: PrescanDecls(i.Then); if (i.Else != null) PrescanDecls(i.Else); break;
                 case WhileStmt w: PrescanDecls(w.Body); break;
+                case ForeachStmt fo: {
+                    string? et = fo.DeclType;
+                    if (et == null) { try { et = ForeachElemType(TypeOf(fo.Coll)); } catch (ForgeException) { } }
+                    if (et != null) AddLocal(fo.Name, et); else { _poisoned.Add(fo.Name); _poisonSources.Add(fo); }   // reported when the loop is lowered
+                    PrescanDecls(fo.Body);
+                    break;
+                }
                 case ForStmt f: {
                     if (f.Init is VarDecl fv) AddLocal(fv.Name, fv.DeclType ?? TypeOf(fv.E));
                     PrescanDecls(f.Body);
@@ -895,9 +906,54 @@ sealed partial class CodeGen {
     // locals' types are known):  obj.f  ->  *(T*)((u8*)obj + offset),  obj.f = v  ->
     // a store through that pointer,  sizeof(T) -> constant,  arr.length -> LengthExpr.
     // Lowering errors are collected per statement (see Recover), so nested blocks keep going too.
-    List<Stmt> LowerBody(List<Stmt> b) => b.Select(s => { Stmt r = s; Recover(s, () => r = LowerStmt(s)); return r; }).ToList();
+    // ---- foreach: element type of what can be iterated (array, string, List<T>)
+    string ForeachElemType(string ct) {
+        if (IsArray(ct)) return ElemType(ct);
+        if (IsStr(ct)) return "int";                                       // the bytes of a string
+        if (_structInstances.TryGetValue(ct, out var si) && si.Template.Name == "List" && si.Map.Count == 1)
+            return si.Map.Values.First();
+        throw new ForgeException($"foreach needs an array, a string or a List<T>, got {ct}", 0);
+    }
+
+    // foreach (T x in coll) body   ->   var c = coll;
+    //                                   for (long i = 0; i < c.length (or c.Count); i++) { T x = c[i] (or c.Get(i)); body }
+    // break/continue labels were placed by the parser (continue at the end of body, so i++ still runs).
+    int _foreachSeq;
+    Stmt LowerForeach(ForeachStmt fe) {
+        string ct = TypeOf(fe.Coll);
+        string elem;
+        try { elem = ForeachElemType(ct); }
+        catch (ForgeException ex) { throw new ForgeException(ex.Message, fe.Line); }
+        if (fe.DeclType != null && !Assignable(fe.DeclType, elem))
+            throw new ForgeException($"foreach variable '{fe.Name}' is {fe.DeclType}, but the elements are {elem}", fe.Line);
+        string vt = fe.DeclType ?? elem;
+        int id = ++_foreachSeq;
+        string cn = $"fe$c{id}", ix = $"fe$i{id}";
+        AddLocal(cn, ct); AddLocal(ix, "long"); AddLocal(fe.Name, vt);
+        int ln = fe.Line;
+        VarRef C() => new VarRef { Line = ln, Name = cn };
+        VarRef I() => new VarRef { Line = ln, Name = ix };
+        bool list = !IsArray(ct) && !IsStr(ct);
+        Expr len = new MemberExpr { Line = ln, Obj = C(), Name = list ? "Count" : "length" };
+        Expr item = list ? new CallExpr { Line = ln, Name = ".Get", Args = { C(), I() } } : new IndexExpr { Line = ln, Arr = C(), Index = I() };
+        var body = new List<Stmt> { new VarDecl { Line = ln, DeclType = vt, Name = fe.Name, E = item } };
+        body.AddRange(fe.Body);
+        var loop = new ForStmt {
+            Line = ln,
+            Init = new VarDecl { Line = ln, DeclType = "long", Name = ix, E = new IntLit { Line = ln, Val = 0 } },
+            Cond = new Binary { Line = ln, Op = "<", L = I(), R = len },
+            Step = new Assign { Line = ln, Name = ix, E = new Binary { Line = ln, Op = "+", L = I(), R = new IntLit { Line = ln, Val = 1 } } },
+            Body = body,
+        };
+        var stmts = new List<Stmt> { new VarDecl { Line = ln, DeclType = ct, Name = cn, E = fe.Coll }, loop };
+        return new BlockStmt { Line = ln, Body = LowerBody(stmts) };
+    }
+
+    // (a statement may lower to several: a BlockStmt is flattened into the body)
+    List<Stmt> LowerBody(List<Stmt> b) => b.SelectMany(s => { Stmt r = s; Recover(s, () => r = LowerStmt(s)); return r is BlockStmt bl ? bl.Body : new List<Stmt> { r }; }).ToList();
     Stmt LowerStmt(Stmt st) {
         switch (st) {
+            case ForeachStmt fe: return LowerForeach(fe);
             case MemberAssign ma: {
                 var ot = TypeOf(ma.Obj);
                 if (!IsStruct(ot)) throw new ForgeException($"'.{ma.Name}' needs a struct, got {ot}", ma.Line);
@@ -940,7 +996,7 @@ sealed partial class CodeGen {
             case MemberExpr me: {
                 var ot = TypeOf(me.Obj);
                 var obj = LowerExpr(me.Obj);
-                if (me.Name == "length" && (IsArray(ot) || IsStr(ot))) return new LengthExpr { Line = me.Line, Arr = obj };
+                if (me.Name is "length" or "Length" && (IsArray(ot) || IsStr(ot))) return new LengthExpr { Line = me.Line, Arr = obj };
                 if (!IsStruct(ot)) throw new ForgeException($"'.{me.Name}' needs a struct, got {ot}", me.Line);
                 var (off, ft) = FieldOf(ot, me.Name, me.Line);
                 return new Deref { Line = me.Line, Ptr = FieldPtr(obj, off, ft, me.Line) };

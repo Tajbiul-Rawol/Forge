@@ -390,6 +390,7 @@ static class Walker {
             case ExprStmt e: WalkExpr(e.E, fe, fs); break;
             case PrintStmt p: WalkExpr(p.Arg, fe, fs); break;
             case MemberAssign ma: WalkExpr(ma.Obj, fe, fs); WalkExpr(ma.E, fe, fs); break;   // before lowering
+            case ForeachStmt fo: WalkExpr(fo.Coll, fe, fs); Walk(fo.Body, fe, fs); break;   // before lowering
         }
     }
     public static void WalkExpr(Expr? e, Action<Expr>? fe, Action<Stmt>? fs) {

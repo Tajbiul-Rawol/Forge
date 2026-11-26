@@ -560,24 +560,374 @@ double __math_acos(double x) {
         ["Atan2"] = new[] { "__math_atan2" },
     };
 
-    // Add the library functions the module needs (and what they call).
+    // ---- collections and strings ------------------------------------------------------
+    public const string CollectionsSource = @"
+module __stdlib_collections;
+
+void __fail(string msg) { Console.WriteLine(msg); exit(1); }
+
+// ---- hashing and ordering, picked by type: __hash(x) and __less(a, b) are resolved
+// by the type checker to the right function for the argument type
+long __hash_int(long x) {
+    x = x ^ (x >> 33);
+    x = x * -49064778989728563;           // 0xff51afd7ed558ccd (MurmurHash3 fmix64)
+    x = x ^ (x >> 33);
+    return x;
+}
+long __hash_str(string s) {                // FNV-1a
+    long h = -3750763034362895579;
+    for (long i = 0; i < s.length; i++) { h = (h ^ s[i]) * 1099511628211; }
+    return h;
+}
+long __hash_dbl(double d) { if (d == 0.0) { return 0; } return __hash_int(*(long*)&d); }   // 0.0 == -0.0
+bool __num_less<T>(T a, T b) { return a < b; }
+bool __str_less(string a, string b) {      // ordinal comparison, like string.CompareOrdinal
+    long n = a.length;
+    if (b.length < n) { n = b.length; }
+    for (long i = 0; i < n; i++) { if (a[i] != b[i]) { return a[i] < b[i]; } }
+    return a.length < b.length;
+}
+void __qsort<T>(T[] a, long lo, long hi) {
+    while (lo < hi) {
+        T p = a[(lo + hi) / 2];
+        long i = lo;
+        long j = hi;
+        while (i <= j) {
+            while (__less(a[i], p)) { i++; }
+            while (__less(p, a[j])) { j--; }
+            if (i <= j) { T t = a[i]; a[i] = a[j]; a[j] = t; i++; j--; }
+        }
+        if (j - lo < hi - i) { __qsort(a, lo, j); lo = i; }   // recurse into the smaller half
+        else { __qsort(a, i, hi); hi = j; }
+    }
+}
+
+// ---- List<T>: a growable array
+struct List<T> {
+    T[] items;
+    int Count;
+
+    void Reserve(long need) {
+        long cap = 0;
+        if (items != null) { cap = items.length; }
+        if (need <= cap) { return; }
+        if (cap < 4) { cap = 4; }
+        while (cap < need) { cap = cap * 2; }
+        T[] bigger = new T[cap];
+        for (long i = 0; i < Count; i++) { bigger[i] = items[i]; }
+        items = bigger;
+    }
+    void Check(long i) { if (i < 0 || i >= Count) { __fail($""List index {i} is out of range (Count is {Count})""); } }
+    void Add(T x) { Reserve(Count + 1); items[Count] = x; Count++; }
+    T Get(long i) { Check(i); return items[i]; }
+    void Set(long i, T x) { Check(i); items[i] = x; }
+    void Insert(long i, T x) {
+        if (i < 0 || i > Count) { __fail($""List.Insert index {i} is out of range (Count is {Count})""); }
+        Reserve(Count + 1);
+        for (long k = Count; k > i; k--) { items[k] = items[k - 1]; }
+        items[i] = x;
+        Count++;
+    }
+    void RemoveAt(long i) {
+        Check(i);
+        for (long k = i; k < Count - 1; k++) { items[k] = items[k + 1]; }
+        Count--;
+    }
+    long IndexOf(T x) {
+        for (long i = 0; i < Count; i++) { if (items[i] == x) { return i; } }
+        return -1;
+    }
+    bool Contains(T x) { return IndexOf(x) >= 0; }
+    bool Remove(T x) {
+        long i = IndexOf(x);
+        if (i < 0) { return false; }
+        RemoveAt(i);
+        return true;
+    }
+    void Clear() { Count = 0; }
+    void Reverse() {
+        long a = 0;
+        long b = Count - 1;
+        while (a < b) { T t = items[a]; items[a] = items[b]; items[b] = t; a++; b--; }
+    }
+    void Sort() { if (Count > 1) { __qsort(items, 0, Count - 1); } }
+    T[] ToArray() {
+        T[] r = new T[Count];
+        for (long i = 0; i < Count; i++) { r[i] = items[i]; }
+        return r;
+    }
+}
+
+// ---- Dictionary<K, V>: a hash table (open addressing, linear probing)
+struct Dictionary<K, V> {
+    K[] keys;
+    V[] vals;
+    long[] state;                          // 0 empty, 1 in use, 2 removed
+    int Count;
+    long filled;                           // in use + removed slots
+
+    void Rehash(long cap) {
+        K[] ok = keys;
+        V[] ov = vals;
+        long[] os = state;
+        keys = new K[cap];
+        vals = new V[cap];
+        state = new long[cap];
+        Count = 0;
+        filled = 0;
+        if (ok != null) {
+            for (long i = 0; i < ok.length; i++) { if (os[i] == 1) { Set(ok[i], ov[i]); } }
+        }
+    }
+    long Find(K key) {                     // the slot holding key, or -1
+        if (keys == null) { return -1; }
+        long mask = keys.length - 1;
+        long i = __hash(key) & mask;
+        while (state[i] != 0) {
+            if (state[i] == 1 && keys[i] == key) { return i; }
+            i = (i + 1) & mask;
+        }
+        return -1;
+    }
+    void Set(K key, V value) {
+        if (keys == null) { Rehash(8); }
+        if ((filled + 1) * 4 > keys.length * 3) {           // keep it at most 3/4 full
+            long cap = keys.length;
+            if ((Count + 1) * 2 > cap) { cap = cap * 2; }   // (else: just clear out removed slots)
+            Rehash(cap);
+        }
+        long mask = keys.length - 1;
+        long i = __hash(key) & mask;
+        long free = -1;
+        while (state[i] != 0) {
+            if (state[i] == 1 && keys[i] == key) { vals[i] = value; return; }
+            if (state[i] == 2 && free < 0) { free = i; }
+            i = (i + 1) & mask;
+        }
+        if (free >= 0) { i = free; } else { filled++; }
+        keys[i] = key;
+        vals[i] = value;
+        state[i] = 1;
+        Count++;
+    }
+    V Get(K key) {
+        long i = Find(key);
+        if (i < 0) { __fail(""Dictionary: the key was not found""); }
+        return vals[i];
+    }
+    bool TryGetValue(K key, V* value) {
+        long i = Find(key);
+        if (i < 0) { return false; }
+        *value = vals[i];
+        return true;
+    }
+    bool ContainsKey(K key) { return Find(key) >= 0; }
+    bool Remove(K key) {
+        long i = Find(key);
+        if (i < 0) { return false; }
+        state[i] = 2;
+        Count--;
+        return true;
+    }
+    void Clear() { keys = null; vals = null; state = null; Count = 0; filled = 0; }
+    List<K> Keys() {
+        var r = new List<K> { };
+        if (keys != null) { for (long i = 0; i < keys.length; i++) { if (state[i] == 1) { r.Add(keys[i]); } } }
+        return r;
+    }
+    List<V> Values() {
+        var r = new List<V> { };
+        if (keys != null) { for (long i = 0; i < keys.length; i++) { if (state[i] == 1) { r.Add(vals[i]); } } }
+        return r;
+    }
+}
+
+// ---- StringBuilder: append without copying the whole string each time
+struct StringBuilder {
+    u8* buf;
+    long Length;
+    long cap;
+
+    void Reserve(long need) {
+        if (need + 1 <= cap) { return; }
+        long c = 16;
+        if (cap > c) { c = cap; }
+        while (c < need + 1) { c = c * 2; }
+        u8* nb = malloc(c);
+        for (long i = 0; i < Length; i++) { nb[i] = buf[i]; }
+        buf = nb;
+        cap = c;
+    }
+    void Append(string s) {
+        long n = s.length;
+        Reserve(Length + n);
+        for (long i = 0; i < n; i++) { buf[Length + i] = s[i]; }
+        Length = Length + n;
+    }
+    void AppendLine(string s) { Append(s); Append(""\n""); }
+    void Clear() { Length = 0; }
+    string ToString() {
+        u8* r = malloc(Length + 1);
+        for (long i = 0; i < Length; i++) { r[i] = buf[i]; }
+        r[Length] = 0;
+        return (string)r;
+    }
+}
+
+// ---- string methods: s.Contains(x) is __str_contains(s, x)
+long __str_indexof_from(string s, string p, long from) {
+    long n = p.length;
+    long m = s.length;
+    for (long i = from; i + n <= m; i++) {
+        long k = 0;
+        while (k < n && s[i + k] == p[k]) { k++; }
+        if (k == n) { return i; }
+    }
+    return -1;
+}
+long __str_indexof(string s, string p) { return __str_indexof_from(s, p, 0); }
+bool __str_contains(string s, string p) { return __str_indexof_from(s, p, 0) >= 0; }
+bool __str_startswith(string s, string p) {
+    if (p.length > s.length) { return false; }
+    for (long i = 0; i < p.length; i++) { if (s[i] != p[i]) { return false; } }
+    return true;
+}
+bool __str_endswith(string s, string p) {
+    long n = p.length;
+    long m = s.length;
+    if (n > m) { return false; }
+    for (long i = 0; i < n; i++) { if (s[m - n + i] != p[i]) { return false; } }
+    return true;
+}
+string __str_substring2(string s, long start, long len) {
+    if (start < 0 || len < 0 || start + len > s.length) { __fail($""Substring({start}, {len}) is out of range for a string of length {s.length}""); }
+    return substr(s, start, len);
+}
+string __str_substring1(string s, long start) { return __str_substring2(s, start, s.length - start); }
+string __str_case(string s, long lo, long hi, long delta) {
+    long n = s.length;
+    u8* r = malloc(n + 1);
+    for (long i = 0; i < n; i++) {
+        long c = s[i];
+        if (c >= lo && c <= hi) { c = c + delta; }
+        r[i] = c;
+    }
+    r[n] = 0;
+    return (string)r;
+}
+string __str_toupper(string s) { return __str_case(s, 97, 122, -32); }
+string __str_tolower(string s) { return __str_case(s, 65, 90, 32); }
+bool __is_space(long c) { return c == 32 || c == 9 || c == 10 || c == 13; }
+string __str_trim(string s) {
+    long a = 0;
+    long b = s.length;
+    while (a < b && __is_space(s[a])) { a++; }
+    while (b > a && __is_space(s[b - 1])) { b--; }
+    return substr(s, a, b - a);
+}
+string __str_replace(string s, string a, string b) {
+    if (a.length == 0) { __fail(""Replace: the string to replace is empty""); }
+    var sb = new StringBuilder { };
+    long pos = 0;
+    while (true) {
+        long i = __str_indexof_from(s, a, pos);
+        if (i < 0) { break; }
+        sb.Append(substr(s, pos, i - pos));
+        sb.Append(b);
+        pos = i + a.length;
+    }
+    sb.Append(substr(s, pos, s.length - pos));
+    return sb.ToString();
+}
+List<string> __str_split(string s, string sep) {
+    var parts = new List<string> { };
+    if (sep.length == 0) { parts.Add(s); return parts; }
+    long pos = 0;
+    while (true) {
+        long i = __str_indexof_from(s, sep, pos);
+        if (i < 0) { break; }
+        parts.Add(substr(s, pos, i - pos));
+        pos = i + sep.length;
+    }
+    parts.Add(substr(s, pos, s.length - pos));
+    return parts;
+}
+";
+
+    // s.Name(args) on a string -> (function, number of arguments after s)
+    public static readonly Dictionary<string, (string Fn, int Args)[]> StringMethods = new() {
+        ["Contains"] = new[] { ("__str_contains", 1) },
+        ["IndexOf"] = new[] { ("__str_indexof", 1) },
+        ["StartsWith"] = new[] { ("__str_startswith", 1) },
+        ["EndsWith"] = new[] { ("__str_endswith", 1) },
+        ["Substring"] = new[] { ("__str_substring1", 1), ("__str_substring2", 2) },
+        ["ToUpper"] = new[] { ("__str_toupper", 0) },
+        ["ToLower"] = new[] { ("__str_tolower", 0) },
+        ["Trim"] = new[] { ("__str_trim", 0) },
+        ["Replace"] = new[] { ("__str_replace", 2) },
+        ["Split"] = new[] { ("__str_split", 1) },
+    };
+    static readonly string[] LibTypes = { "List", "Dictionary", "StringBuilder" };
+    static readonly Dictionary<string, string[]> Dispatch = new() {
+        ["__hash"] = new[] { "__hash_int", "__hash_str", "__hash_dbl" },
+        ["__less"] = new[] { "__num_less", "__str_less" },
+    };
+
+    // Add the library the module uses: Math functions, string methods and the List /
+    // Dictionary / StringBuilder types, plus everything those use in turn.
     public static void Inject(ModuleNode m) {
-        var wanted = new HashSet<string>();
-        foreach (var f in m.Funcs)
-            Walk(f.Body, name => {
-                if (name.StartsWith("Math.") && MathMembers.TryGetValue(name[5..], out var fs)) wanted.UnionWith(fs);
-            });
-        if (wanted.Count == 0) return;
-        var lib = new Parser(new Lexer(MathSource).Lex()).ParseModule().Funcs.ToDictionary(f => f.Name);
-        var have = new HashSet<string>(m.Funcs.Select(f => f.Name));
-        var queue = new Queue<string>(wanted);
-        while (queue.Count > 0) {
-            var n = queue.Dequeue();
-            if (have.Contains(n) || !lib.TryGetValue(n, out var f)) continue;
-            have.Add(n);
-            f.IsRuntime = true; f.Line = 0;
-            m.Funcs.Add(f);
-            Walk(f.Body, callee => { if (lib.ContainsKey(callee) && !have.Contains(callee)) queue.Enqueue(callee); });
+        var wantFns = new HashSet<string>();
+        var wantTypes = new HashSet<string>();
+        var own = new HashSet<string>(m.Structs.Select(s => s.Name));
+        void Calls(string name) {
+            if (name.StartsWith("Math.") && MathMembers.TryGetValue(name[5..], out var fs)) wantFns.UnionWith(fs);
+            else if (name.StartsWith(".") && StringMethods.TryGetValue(name[1..], out var sm)) wantFns.UnionWith(sm.Select(x => x.Fn));
+            else if (Dispatch.TryGetValue(name, out var ds)) wantFns.UnionWith(ds);
+            else wantFns.Add(name);
+        }
+        void Types(string t) {
+            foreach (System.Text.RegularExpressions.Match id in System.Text.RegularExpressions.Regex.Matches(t, @"[A-Za-z_]\w*"))
+                if (LibTypes.Contains(id.Value) && !own.Contains(id.Value)) wantTypes.Add(id.Value);
+        }
+        void Scan(Func f) {
+            Types(f.Ret);
+            foreach (var (t, _) in f.Params) Types(t);
+            Walk(f.Body, Calls);
+            new GenericCloner(t => t, "") { OnType = (t, _) => Types(t) }.CloneBody(f.Body);
+        }
+        foreach (var f in m.Funcs) Scan(f);
+        foreach (var s in m.Structs) foreach (var (t, _) in s.Fields) Types(t);
+        // a foreach can iterate a List<T> without naming the type, but then the List came from somewhere that does
+
+        bool anyLib = wantTypes.Count > 0 || wantFns.Any(n => n.StartsWith("__math_") || n.StartsWith("__str_") || n == "__sqrt");
+        if (!anyLib) return;
+        var libMods = new[] { MathSource, CollectionsSource }.Select(src => new Parser(new Lexer(src).Lex()).ParseModule()).ToList();
+        var libFuncs = libMods.SelectMany(x => x.Funcs).Where(f => f.GenericOwner == null && !f.Name.Contains('.')).ToDictionary(f => f.Name);
+        var libStructs = libMods.SelectMany(x => x.Structs).ToDictionary(s => s.Name);
+        var libMethods = libMods.SelectMany(x => x.Funcs).Where(f => f.GenericOwner != null || f.Name.Contains('.')).ToList();
+        var haveFns = new HashSet<string>(m.Funcs.Select(f => f.Name));
+        var haveTypes = new HashSet<string>();
+        bool progress = true;
+        while (progress) {
+            progress = false;
+            foreach (var tn in wantTypes.ToList()) {
+                if (haveTypes.Contains(tn) || own.Contains(tn) || !libStructs.TryGetValue(tn, out var sd)) continue;
+                haveTypes.Add(tn); progress = true;
+                m.Structs.Add(sd);
+                foreach (var meth in libMethods.Where(f => f.Name.StartsWith(tn + "."))) {
+                    meth.IsRuntime = true; meth.Line = 0;
+                    m.Funcs.Add(meth); haveFns.Add(meth.Name);
+                    Scan(meth);
+                }
+                foreach (var (t, _) in sd.Fields) Types(t);
+            }
+            foreach (var fn in wantFns.ToList()) {
+                if (haveFns.Contains(fn) || !libFuncs.TryGetValue(fn, out var f)) continue;
+                haveFns.Add(fn); progress = true;
+                f.IsRuntime = true; f.Line = 0;
+                m.Funcs.Add(f);
+                Scan(f);
+            }
         }
     }
 
@@ -611,5 +961,34 @@ sealed partial class CodeGen {
             "Log" when c.Args.Count == 2 => "__math_logb",
             _ => "__math_" + member.ToLowerInvariant(),
         };
+    }
+}
+
+sealed partial class CodeGen {
+    // s.Name(args) on a string -> the library function (__str_contains(s, x), ...)
+    void ResolveStringMethod(CallExpr c) {
+        string name = c.Name[1..];
+        if (!StdLib.StringMethods.TryGetValue(name, out var forms))
+            throw new ForgeException($"string has no method '{name}'" + Suggest.Hint(name, StdLib.StringMethods.Keys), c.Line);
+        int n = c.Args.Count - 1;
+        var form = forms.FirstOrDefault(f => f.Args == n);
+        if (form.Fn == null)
+            throw new ForgeException($"string.{name} takes {string.Join(" or ", forms.Select(f => f.Args))} argument(s), got {n}", c.Line);
+        c.Name = form.Fn;
+    }
+
+    // __hash(x) / __less(a, b) inside the library: the version for the argument type
+    void ResolveLibDispatch(CallExpr c) {
+        var t = TypeOf(c.Args[0]);
+        if (c.Name == "__hash") {
+            if (IsStr(t)) c.Name = "__hash_str";
+            else if (t == "double") c.Name = "__hash_dbl";
+            else {
+                if (!IsInt(t)) c.Args[0] = new CastExpr { Line = c.Line, TargetType = "long", E = c.Args[0] };   // references hash by identity
+                c.Name = "__hash_int";
+            }
+        } else {
+            c.Name = IsStr(t) ? "__str_less" : "__num_less";
+        }
     }
 }

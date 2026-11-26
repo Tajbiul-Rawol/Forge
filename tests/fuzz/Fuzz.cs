@@ -28,6 +28,7 @@ static class Fuzz {
         "double", "1.5", "0.0", "(double)", "(int)",
         "<T>", "T", "<int>", "List<int>", "<string,int>", ">>",
         "Math.Sqrt(", "Math.Pow(", "Math.PI", "Math.Abs(", "Math.Sin(",
+        "foreach", "in", "List<int>", "Dictionary<string,int>", ".Add(", ".Get(", ".Split(", ".Count",
         "0", "-1", "9223372036854775807", "99999999999999999999", "0x", "1e400", "Main", "x",
     };
     const int TimeoutMs = 10_000;
