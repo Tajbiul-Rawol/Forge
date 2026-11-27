@@ -1,0 +1,480 @@
+module http_prod;
+
+// Production-style HTTP/1.1 server in Forge (Windows): non-blocking Winsock sockets
+// and one WSAPoll event loop per thread, the same design as ../c/server.c.
+// Keep-alive, pipelining, Content-Length bodies, idle timeouts, lingering close,
+// header limits, a cached Date header and correct status codes. Memory is fixed
+// per thread: connections and their buffers are pooled and reused, so the server
+// runs indefinitely without heapreset().
+//
+//   GET / -> 200 "Hello, World!"; other method on / -> 405; other path -> 404;
+//   malformed -> 400; headers > 8 KB -> 431; body > 1 MB -> 413; Transfer-Encoding -> 501.
+//
+// Usage: server [port] [threads]      (threads = 1: single-threaded; 0 = one per CPU)
+// Build: forgec build server.fg -o server.exe --target win
+
+extern "ws2_32.dll" i32 WSAStartup(u16 version, u8* data);
+extern "ws2_32.dll" long socket(i32 af, i32 type, i32 protocol);
+extern "ws2_32.dll" i32 bind(long s, u8* addr, i32 len);
+extern "ws2_32.dll" i32 listen(long s, i32 backlog);
+extern "ws2_32.dll" i32 ioctlsocket(long s, i32 cmd, u8* arg);
+extern "ws2_32.dll" i32 setsockopt(long s, i32 level, i32 name, u8* value, i32 len);
+extern "ws2_32.dll" i32 WSAPoll(u8* fds, u32 count, i32 timeout);
+extern "ws2_32.dll" long accept(long s, u8* addr, u8* len);
+extern "ws2_32.dll" i32 recv(long s, u8* buf, i32 len, i32 flags);
+extern "ws2_32.dll" i32 send(long s, u8* buf, i32 len, i32 flags);
+extern "ws2_32.dll" i32 shutdown(long s, i32 how);
+extern "ws2_32.dll" i32 closesocket(long s);
+extern "ws2_32.dll" i32 WSAGetLastError();
+extern "kernel32.dll" long GetTickCount64();
+extern "kernel32.dll" void GetSystemTime(u8* st);
+extern "kernel32.dll" u8* GetCommandLineA();
+extern "msvcrt.dll" u8* memmove(u8* dst, u8* src, long n);
+
+// limits (small functions: the optimizer inlines them)
+int InCap() { return 8192; }          // max request head; also the read buffer
+int OutCap() { return 16384; }        // pending responses (pipelining backpressure)
+int MaxConns() { return 4096; }       // per thread
+int MaxBody() { return 1048576; }
+int IdleMs() { return 30000; }
+int DrainMs() { return 2000; }        // lingering close: how long to wait for the peer
+int WouldBlock() { return 10035; }    // WSAEWOULDBLOCK
+int PollIn() { return 0x0300; }       // POLLRDNORM | POLLRDBAND
+int PollOut() { return 0x0010; }      // POLLWRNORM
+int PollErr() { return 0x0005; }      // POLLERR | POLLNVAL
+int PollHup() { return 0x0002; }
+
+struct Conn {
+    long fd;
+    int inlen; int scan;              // bytes buffered; where to resume looking for \r\n\r\n
+    int outlen; int outoff;
+    long skip;                        // request-body bytes still to discard
+    long last;                        // last activity, for the idle timeout
+    bool closeAfter;                  // close once the output is flushed
+    bool draining;                    // lingering close: output shut down, discarding input
+    u8* inb; u8* outb;
+}
+
+struct Loop {
+    long listener;
+    u8* pfd;                          // WSAPOLLFD[MaxConns + 1]: 16 bytes each, [0] = listener
+    Conn[] conns; int n;
+    Conn[] pool; int poolN;           // closed connections, kept with their buffers
+    long dateSec;
+    u8* date;                         // "Date: Thu, 26 Nov 2026 12:00:00 GMT\r\n" (37 bytes)
+    u8* st;                           // SYSTEMTIME scratch
+    u8* scratch;
+}
+
+// ---- small helpers on raw bytes ----
+
+int Put(u8* dst, string s) {          // copy a string's bytes; returns the count
+    int n = s.length;
+    memmove(dst, (u8*)s, n);
+    return n;
+}
+
+int PutInt(u8* dst, int v) {          // decimal digits of v >= 0
+    u8* tmp = dst + 24;
+    int k = 0;
+    if (v == 0) { dst[0] = 48; return 1; }
+    while (v > 0) { tmp[k] = (u8)(48 + v % 10); v = v / 10; k++; }
+    for (int i = 0; i < k; i++) { dst[i] = tmp[k - 1 - i]; }
+    return k;
+}
+
+void Put2(u8* dst, int v) { dst[0] = (u8)(48 + v / 10); dst[1] = (u8)(48 + v % 10); }
+
+int Lower(int c) {
+    if (c >= 65 && c <= 90) { return c + 32; }
+    return c;
+}
+
+bool IEq(u8* a, int alen, string lit) {   // case-insensitive; lit is lower case
+    if (alen != lit.length) { return false; }
+    u8* b = (u8*)lit;
+    for (int i = 0; i < alen; i++) {
+        if (Lower(a[i]) != b[i]) { return false; }
+    }
+    return true;
+}
+
+bool Sep(int c) { return c == 32 || c == 44; }   // ' ' or ','
+
+bool HasToken(u8* v, int vlen, string tok) {      // "keep-alive, Upgrade"
+    int n = tok.length;
+    for (int i = 0; i + n <= vlen; i++) {
+        if (IEq(v + i, n, tok)) {
+            bool before = i == 0;
+            if (!before) { before = Sep(v[i - 1]); }
+            bool after = i + n == vlen;
+            if (!after) { after = Sep(v[i + n]); }
+            if (before && after) { return true; }
+        }
+    }
+    return false;
+}
+
+bool IsSpace(int c) { return c == 32 || c == 9; }
+
+// ---- the cached Date header ----
+
+void UpdateDate(Loop L, long now) {
+    long sec = now / 1000;
+    if (sec == L.dateSec) { return; }
+    L.dateSec = sec;
+    GetSystemTime(L.st);
+    u16* t = (u16*)L.st;              // year, month, day of week, day, hour, minute, second
+    u8* d = L.date;
+    string days = "SunMonTueWedThuFriSat";
+    string months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    u8* dn = (u8*)days;
+    u8* mn = (u8*)months;
+    Put(d, "Date: ");
+    int dow = t[2];
+    int mon = t[1] - 1;
+    // byte offsets: "Date: " 0, day 6, ", " 9, dd 11, month 14, yyyy 18, hh:mm:ss 23, " GMT\r\n" 31
+    for (int i = 0; i < 3; i++) { d[6 + i] = dn[dow * 3 + i]; d[14 + i] = mn[mon * 3 + i]; }
+    d[9] = 44; d[10] = 32;            // ", "
+    Put2(d + 11, t[3]); d[13] = 32;
+    d[17] = 32;
+    int year = t[0];
+    Put2(d + 18, year / 100); Put2(d + 20, year % 100);
+    d[22] = 32;
+    Put2(d + 23, t[4]); d[25] = 58; Put2(d + 26, t[5]); d[28] = 58; Put2(d + 29, t[6]);
+    Put(d + 31, " GMT\r\n");
+}
+
+// ---- responses ----
+
+void Respond(Loop L, Conn c, int status, string reason, string body, bool keep) {
+    if (OutCap() - c.outlen < 256 + body.length) { return; }
+    u8* o = c.outb + c.outlen;
+    int k = Put(o, "HTTP/1.1 ");
+    k += PutInt(o + k, status);
+    o[k] = 32; k++;
+    k += Put(o + k, reason);
+    k += Put(o + k, "\r\nServer: forge\r\n");
+    memmove(o + k, L.date, 37); k += 37;
+    k += Put(o + k, "Content-Type: text/plain\r\nContent-Length: ");
+    k += PutInt(o + k, body.length);
+    k += Put(o + k, "\r\n");
+    if (!keep) { k += Put(o + k, "Connection: close\r\n"); c.closeAfter = true; }
+    k += Put(o + k, "\r\n");
+    k += Put(o + k, body);
+    c.outlen += k;
+}
+
+void Fail(Loop L, Conn c, int status, string reason) { Respond(L, c, status, reason, reason, false); }
+
+void Consume(Conn c, int k) {
+    memmove(c.inb, c.inb + k, c.inlen - k);
+    c.inlen -= k;
+    c.scan = 0;
+}
+
+// Answer every complete request buffered in c.inb.
+void Process(Loop L, Conn c) {
+    while (!c.closeAfter) {
+        if (c.skip > 0) {                                   // discard a request body
+            int k = c.inlen;
+            if (c.skip < k) { k = (int)c.skip; }
+            Consume(c, k);
+            c.skip -= k;
+            if (c.skip > 0) { return; }
+        }
+        if (OutCap() - c.outlen < 512) { return; }         // backpressure
+        u8* h = c.inb;
+        int i = 0;
+        if (c.scan > 3) { i = c.scan - 3; }
+        int end = -1;
+        while (i + 3 < c.inlen) {
+            if (h[i + 3] == 10 && h[i] == 13 && h[i + 1] == 10 && h[i + 2] == 13) { end = i; break; }
+            i++;
+        }
+        if (end < 0) {
+            c.scan = c.inlen;
+            if (c.inlen == InCap()) { Fail(L, c, 431, "Request Header Fields Too Large"); }
+            return;
+        }
+        // request line: METHOD SP TARGET SP HTTP/1.x
+        int le = 0;
+        while (le < end && h[le] != 13) { le++; }
+        int sp1 = 0;
+        while (sp1 < le && h[sp1] != 32) { sp1++; }
+        int sp2 = sp1 + 1;
+        while (sp2 < le && h[sp2] != 32) { sp2++; }
+        bool ok = sp1 > 0 && sp2 < le && sp2 > sp1 + 1 && le - sp2 - 1 == 8;
+        if (ok) { ok = IEq(h + sp2 + 1, 7, "http/1.") && h[sp2 + 1] == 72; }   // exact "HTTP/1."
+        if (ok) { ok = h[le - 1] == 48 || h[le - 1] == 49; }
+        if (!ok) { Fail(L, c, 400, "Bad Request"); return; }
+        bool keep = h[le - 1] == 49;                          // HTTP/1.1 defaults to keep-alive
+        bool isGet = sp1 == 3 && h[0] == 71 && h[1] == 69 && h[2] == 84;
+        bool isRoot = sp2 - sp1 - 1 == 1 && h[sp1 + 1] == 47;
+        long clen = 0;
+        bool te = false;
+        bool bad = false;
+        int p = le + 2;
+        while (p < end) {                                     // headers
+            int e = p;
+            while (e < end && h[e] != 13) { e++; }
+            int colon = p;
+            while (colon < e && h[colon] != 58) { colon++; }
+            if (colon == e || colon == p) { bad = true; break; }
+            int v = colon + 1;
+            while (v < e && IsSpace(h[v])) { v++; }
+            int ve = e;
+            while (ve > v && IsSpace(h[ve - 1])) { ve--; }
+            int nlen = colon - p;
+            if (IEq(h + p, nlen, "connection")) {
+                if (HasToken(h + v, ve - v, "close")) { keep = false; }
+                else if (HasToken(h + v, ve - v, "keep-alive")) { keep = true; }
+            } else if (IEq(h + p, nlen, "content-length")) {
+                if (v == ve) { bad = true; }
+                clen = 0;
+                for (int j = v; j < ve; j++) {
+                    int dch = h[j];
+                    if (dch < 48 || dch > 57 || clen > MaxBody()) { bad = true; break; }
+                    clen = clen * 10 + (dch - 48);
+                }
+            } else if (IEq(h + p, nlen, "transfer-encoding")) {
+                te = true;
+            }
+            p = e + 2;
+        }
+        Consume(c, end + 4);
+        if (bad) { Fail(L, c, 400, "Bad Request"); return; }
+        if (te) { Fail(L, c, 501, "Not Implemented"); return; }
+        if (clen > MaxBody()) { Fail(L, c, 413, "Content Too Large"); return; }
+        c.skip = clen;
+        if (!isRoot) { Respond(L, c, 404, "Not Found", "Not Found", keep); }
+        else if (!isGet) { Respond(L, c, 405, "Method Not Allowed", "Method Not Allowed", keep); }
+        else { Respond(L, c, 200, "OK", "Hello, World!", keep); }
+    }
+}
+
+// Send what is pending. Returns false if the connection must close now. A closing
+// connection gets a lingering close: shut down our side, then discard input until
+// the peer closes, so the peer reads the final response instead of a reset.
+bool Flush(Conn c, long now) {
+    while (c.outoff < c.outlen) {
+        i32 k = send(c.fd, c.outb + c.outoff, (i32)(c.outlen - c.outoff), 0);
+        if (k < 0) { return WSAGetLastError() == WouldBlock(); }
+        c.outoff += k;
+    }
+    c.outoff = 0;
+    c.outlen = 0;
+    if (c.closeAfter && !c.draining) {
+        shutdown(c.fd, 1);                                    // SD_SEND
+        c.draining = true;
+        c.inlen = 0;
+        c.last = now;
+    }
+    return true;
+}
+
+// ---- the event loop ----
+
+u8* PfdAt(Loop L, int i) { return L.pfd + 16 * i; }
+
+void SetPfd(Loop L, int i, long fd, int events) {
+    u8* p = PfdAt(L, i);
+    long* f = (long*)p;
+    f[0] = fd;
+    u16* ev = (u16*)(p + 8);
+    ev[0] = (u16)events;
+    ev[1] = 0;
+}
+
+int Revents(Loop L, int i) {
+    u16* ev = (u16*)(PfdAt(L, i) + 10);
+    return ev[0];
+}
+
+void SetEvents(Loop L, int i, int events) {
+    u16* ev = (u16*)(PfdAt(L, i) + 8);
+    ev[0] = (u16)events;
+}
+
+void CloseConn(Loop L, int i) {                              // i indexes conns; its pollfd is i + 1
+    Conn c = L.conns[i];
+    closesocket(c.fd);
+    L.pool[L.poolN] = c;
+    L.poolN++;
+    L.n--;
+    L.conns[i] = L.conns[L.n];
+    memmove(PfdAt(L, i + 1), PfdAt(L, L.n + 1), 16);
+}
+
+void SetNonBlocking(Loop L, long s) {
+    u32* one = (u32*)L.scratch;
+    one[0] = 1;
+    ioctlsocket(s, (i32)-2147195266, L.scratch);             // FIONBIO
+}
+
+void AcceptAll(Loop L, long now) {
+    while (true) {
+        long s = accept(L.listener, null, null);
+        if (s == -1) { return; }                              // WSAEWOULDBLOCK: no more
+        if (L.n == MaxConns()) { closesocket(s); continue; }
+        SetNonBlocking(L, s);
+        u32* one = (u32*)L.scratch;
+        one[0] = 1;
+        setsockopt(s, 6, 1, L.scratch, 4);                    // IPPROTO_TCP, TCP_NODELAY
+        Conn c = null;
+        if (L.poolN > 0) {
+            L.poolN--;
+            c = L.pool[L.poolN];
+        } else {
+            c = new Conn { inb = malloc(InCap()), outb = malloc(OutCap()) };
+        }
+        c.fd = s; c.inlen = 0; c.scan = 0; c.outlen = 0; c.outoff = 0; c.skip = 0;
+        c.closeAfter = false; c.draining = false; c.last = now;
+        L.conns[L.n] = c;
+        SetPfd(L, L.n + 1, s, PollIn());
+        L.n++;
+    }
+}
+
+// Returns false when the connection must be closed now.
+bool Service(Loop L, Conn c, int ev, long now) {
+    if ((ev & PollErr()) != 0) { return false; }
+    if ((ev & (PollIn() | PollHup())) != 0) {
+        while (true) {                                        // read until it would block
+            int room = InCap() - c.inlen;
+            if (room == 0) { break; }
+            i32 k = recv(c.fd, c.inb + c.inlen, (i32)room, 0);
+            if (k == 0) { return false; }
+            if (k < 0) {
+                if (WSAGetLastError() != WouldBlock()) { return false; }
+                break;
+            }
+            c.inlen += k;
+            if (k < room) { break; }
+        }
+        if (c.draining) { c.inlen = 0; }                      // lingering close: discard
+        else { c.last = now; Process(L, c); }
+    }
+    bool pending = c.outlen > 0;
+    if (!pending) { pending = c.closeAfter && !c.draining; }
+    if (pending) {
+        if (!Flush(c, now)) { return false; }
+        if (!c.draining && c.outlen == 0 && c.inlen > 0) {
+            Process(L, c);
+            if (c.outlen > 0) {
+                if (!Flush(c, now)) { return false; }
+            }
+        }
+    }
+    return true;
+}
+
+void RunLoop(long listener) {
+    Loop L = new Loop { listener = listener, pfd = malloc(16 * (MaxConns() + 1)),
+                        conns = new Conn[MaxConns()], pool = new Conn[MaxConns()],
+                        date = malloc(64), st = malloc(32), scratch = malloc(16), dateSec = -1 };
+    SetPfd(L, 0, listener, PollIn());
+    long lastSweep = GetTickCount64();
+    while (true) {
+        i32 r = WSAPoll(L.pfd, (u32)(L.n + 1), 1000);
+        long now = GetTickCount64();
+        UpdateDate(L, now);
+        if (r > 0) {
+            if ((Revents(L, 0) & PollIn()) != 0) { AcceptAll(L, now); }
+            int i = L.n - 1;
+            while (i >= 0) {                                  // backwards: CloseConn moves the last one here
+                int ev = Revents(L, i + 1);
+                if (ev != 0) {
+                    Conn c = L.conns[i];
+                    if (!Service(L, c, ev, now)) {
+                        CloseConn(L, i);
+                    } else if (c.outlen > c.outoff) {
+                        SetEvents(L, i + 1, PollOut());
+                    } else {
+                        SetEvents(L, i + 1, PollIn());
+                    }
+                }
+                i--;
+            }
+        }
+        if (now - lastSweep >= 1000) {                        // idle and lingering-close timeouts
+            lastSweep = now;
+            int j = L.n - 1;
+            while (j >= 0) {
+                Conn c = L.conns[j];
+                long limit = IdleMs();
+                if (c.draining) { limit = DrainMs(); }
+                if (now - c.last > limit) { CloseConn(L, j); }
+                j--;
+            }
+        }
+    }
+}
+
+int Worker(long listener) {
+    RunLoop(listener);
+    return 0;
+}
+
+long MakeListener(int port) {
+    long s = socket(2, 1, 6);                                 // AF_INET, SOCK_STREAM, IPPROTO_TCP
+    if (s == -1) { return -1; }
+    u8* one = malloc(8);
+    u32* o = (u32*)one;
+    o[0] = 1;
+    setsockopt(s, 0xFFFF, 4, one, 4);                         // SOL_SOCKET, SO_REUSEADDR
+    u8* a = malloc(16);                                       // sockaddr_in, INADDR_ANY
+    a[0] = 2;                                                 // AF_INET
+    a[2] = (u8)(port / 256);                                  // port, big-endian
+    a[3] = (u8)(port % 256);
+    if (bind(s, a, 16) != 0) { return -1; }
+    if (listen(s, 4096) != 0) { return -1; }
+    ioctlsocket(s, (i32)-2147195266, one);                    // FIONBIO (one is still 1)
+    return s;
+}
+
+// The command line is "exe [port] [threads]": skip the program name (maybe quoted)
+// and read up to two numbers.
+int Arg(u8* cmd, int index, int fallback) {
+    int i = 0;
+    if (cmd[0] == 34) {
+        i = 1;
+        while (cmd[i] != 0 && cmd[i] != 34) { i++; }
+        if (cmd[i] == 34) { i++; }
+    } else {
+        while (cmd[i] != 0 && cmd[i] != 32) { i++; }
+    }
+    int found = 0;
+    while (cmd[i] != 0) {
+        while (cmd[i] == 32) { i++; }
+        if (cmd[i] == 0) { break; }
+        int v = 0;
+        bool digits = false;
+        while (cmd[i] >= 48 && cmd[i] <= 57) { v = v * 10 + (cmd[i] - 48); digits = true; i++; }
+        while (cmd[i] != 0 && cmd[i] != 32) { i++; }
+        if (found == index) {
+            if (digits) { return v; }
+            return fallback;
+        }
+        found++;
+    }
+    return fallback;
+}
+
+void Main() {
+    u8* cmd = GetCommandLineA();
+    int port = Arg(cmd, 0, 8100);
+    int threads = Arg(cmd, 1, 1);
+    if (threads <= 0) { threads = cpu_count(); }
+    WSAStartup((u16)0x0202, malloc(512));
+    long listener = MakeListener(port);
+    if (listener == -1) {
+        Console.WriteLine($"cannot listen on port {port}");
+        exit(1);
+    }
+    string plural = "s";
+    if (threads == 1) { plural = ""; }
+    Console.WriteLine($"Forge server on port {port} ({threads} thread{plural})");
+    for (int t = 1; t < threads; t++) { spawn Worker(listener); }
+    RunLoop(listener);
+}

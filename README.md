@@ -49,7 +49,8 @@ ForgeLang/
 │
 ├── tests/             <- run.sh (the regression suite), manifest, expected output, the fuzzer,
 │                         kernel boot scripts, debugger scripts and the Windows debugger harness
-├── benchmarks/        <- Forge against C, C++, Rust, Go and C# (see benchmarks/README.md)
+├── benchmarks/        <- Forge against C, C++, Rust, Go and C#, including production HTTP servers
+│                         (see benchmarks/README.md)
 │
 └── examples/
     ├── hello.fg       <- minimal program
@@ -1138,6 +1139,13 @@ Then from another terminal (or a browser): `curl http://127.0.0.1:9200/`.
 This example is single-threaded (one connection at a time). For a server that uses every
 CPU, see `benchmarks/http-server/bench_server_mt.fg`, and free each request's memory with
 `heapmark`/`heapreset` (see "Memory without a garbage collector").
+
+For a production-style server, see `benchmarks/http-prod/forge/server.fg`. It handles
+keep-alive, pipelining, request bodies, timeouts and error responses, using non-blocking
+Winsock and one `WSAPoll` loop per CPU, all called through `extern`. Connection memory
+is pooled, so it runs indefinitely. Pipelined, it is the fastest of the six servers in
+`benchmarks/http-prod/`: about 400k req/s on one thread and 644k on 16, ahead of
+hand-written C and C++, hyper, Kestrel and net/http.
 
 ## async / await (all targets, including bare metal)
 
