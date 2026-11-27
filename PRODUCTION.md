@@ -21,8 +21,11 @@ Each item needs its tests in `tests/run.sh` and its documentation in `README.md`
 - [x] **6. README matches the compiler.** Remove stale claims such as "function calls
       (up to 4 parameters)". (Every section checked against the compiler; `tests/run.sh`
       fails if an example or source file is missing from the README's file tree)
-- [ ] **7. Tests stay green.** The suite, the fuzzer and CI pass, with tests for each item
-      above.
+- [x] **7. Tests stay green.** The suite, the fuzzer and CI pass, with tests for each item
+      above. (`tests/run.sh`: 202 passed, 0 failed; `tests/fuzz` seed 7: 20,010 inputs,
+      0 compiler bugs; CI green on Windows and Ubuntu)
+
+All seven items are checked: Forge meets its 1.0 definition.
 
 ## Post-1.0 (not part of the definition)
 
