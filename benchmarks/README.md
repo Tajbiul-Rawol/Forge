@@ -1,12 +1,15 @@
 # Forge benchmarks — reproduce them yourself
 
-Every source file, load generator and script is here. Four benchmarks:
+Every source file, load generator and script is here. Five benchmarks:
 
 - `cpu-fibonacci/` — recursive `fib(40)`: function calls + integer math.
 - `json/` — serialize 20,000 records to JSON and parse them back, 100 passes
   (323 MB of JSON per run): byte-level string work, branches, loads/stores.
 - `http-server/` — a minimal HTTP server in each language, single-threaded
   (`run.ps1` / `run.sh`) and multithreaded (`run_mt.ps1` / `run_mt.sh`).
+- `http-prod/` — production HTTP servers: hand-written event loops in Forge, C and
+  C++; hyper, net/http and Kestrel for Rust, Go and C#. Keep-alive, pipelining, an HTTP
+  conformance check, and single- and multithreaded runs (`run.ps1`). See its README.
 - `threads/` — parallel compute, atomics, a mutex and thread start-up, using
   each language's standard threads.
 
